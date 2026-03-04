@@ -3,6 +3,8 @@ import os
 import asyncio
 import logging
 import time
+import re
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, TypedDict
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +15,12 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("research_agent")
 
 app = FastAPI(title="Web Research Agent module")
 
@@ -30,6 +35,21 @@ app.add_middleware(
 
 # In-memory job storage
 jobs: Dict[str, Dict[str, Any]] = {}
+
+# Rate limiting
+MAX_CONCURRENT_JOBS = 3
+job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+# Caching logic
+CACHE_DURATION = timedelta(hours=1)
+result_cache: Dict[str, Dict[str, Any]] = {}
+
+# Stats tracking
+stats = {
+    "total_jobs_run": 0,
+    "total_time_seconds": 0.0,
+    "escalated_jobs": 0
+}
 
 # Pydantic models
 class ResearchRequest(BaseModel):
@@ -46,6 +66,11 @@ class JobStatusResponse(BaseModel):
     status: str
     current_step: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
+    
+class StatsResponse(BaseModel):
+    total_jobs_run: int
+    avg_time_seconds: float
+    escalation_rate: float
 
 # LangGraph state schema
 class ResearchState(TypedDict):
@@ -129,12 +154,20 @@ async def run_parallel_searches(
     # or join them if there are multiple.
     primary_promoter = promoter_names[0] if promoter_names else "Unknown Promoter"
     
+    # Input sanitization
+    def sanitize(text: str) -> str:
+        # Strip all non-alphanumeric/space characters to prevent injection
+        return re.sub(r'[^a-zA-Z0-9\s]', '', text).strip()
+        
+    s_company = sanitize(company_name)
+    s_promoter = sanitize(primary_promoter)
+    
     queries = {
-        "promoter_risk": f"{primary_promoter} NCLT fraud litigation India",
-        "credit_history": f"{company_name} credit rating downgrade RBI",
-        "sector_outlook": f"{company_name} {industry} sector outlook 2024 2025",
-        "mca_check": f"{primary_promoter} MCA director disqualification",
-        "default_history": f"{company_name} default NPA bank"
+        "promoter_risk": f"{s_promoter} NCLT fraud litigation India",
+        "credit_history": f"{s_company} credit rating downgrade RBI",
+        "sector_outlook": f"{s_company} {industry} sector outlook 2024 2025",
+        "mca_check": f"{s_promoter} MCA director disqualification",
+        "default_history": f"{s_company} default NPA bank"
     }
 
     # Create a list of tasks for asyncio.gather
@@ -204,9 +237,15 @@ async def run_escalation_searches(state: ResearchState) -> ResearchState:
     primary_promoter = state["promoter_names"][0] if state["promoter_names"] else "Unknown Promoter"
     company_name = state["company_name"]
     
+    def sanitize(text: str) -> str:
+        return re.sub(r'[^a-zA-Z0-9\s]', '', text).strip()
+        
+    s_company = sanitize(company_name)
+    s_promoter = sanitize(primary_promoter)
+    
     queries = {
-        "nclt_cases": f"{primary_promoter} NCLT case number status site:nclt.gov.in OR site:ecourts.gov.in",
-        "ed_attachments": f"{company_name} enforcement directorate ED attachment"
+        "nclt_cases": f"{s_promoter} NCLT case number status site:nclt.gov.in OR site:ecourts.gov.in",
+        "ed_attachments": f"{s_company} enforcement directorate ED attachment"
     }
     
     tasks = [
@@ -358,6 +397,8 @@ workflow.add_edge("classify_risks", END)
 research_graph = workflow.compile()
 
 async def execute_research_graph(job_id: str, request: ResearchRequest):
+    start_time = time.time()
+    
     try:
         jobs[job_id]["status"] = "running"
         jobs[job_id]["current_step"] = "initializing"
@@ -374,14 +415,53 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "classification": {}
         }
         
-        # Stream the graph so we could theoretically intercept events, 
-        # but our tracked nodes handle the step updates.
-        final_state = await research_graph.ainvoke(initial_state)
+        # Enforce 30 second strict timeout on the entire graph
+        final_state = await asyncio.wait_for(
+            research_graph.ainvoke(initial_state),
+            timeout=30.0
+        )
         
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["current_step"] = "done"
-        jobs[job_id]["result"] = final_state.get("classification", {})
         
+        final_classification = final_state.get("classification", {})
+        jobs[job_id]["result"] = final_classification
+        jobs[job_id]["risk_signals"] = final_state.get("risk_signals", [])
+        
+        # Update cache
+        cache_key = request.company_name.lower().strip()
+        result_cache[cache_key] = {
+            "timestamp": datetime.now(),
+            "classification": final_classification,
+            "risk_signals": final_state.get("risk_signals", [])
+        }
+        
+        # Update Stats
+        time_taken = time.time() - start_time
+        escalated = final_state.get("escalation_triggered", False)
+        
+        stats["total_jobs_run"] += 1
+        stats["total_time_seconds"] += time_taken
+        if escalated:
+            stats["escalated_jobs"] += 1
+            
+        # Structured Logging    
+        logger.info(
+            json.dumps({
+                "event": "job_completed",
+                "job_id": job_id,
+                "company": request.company_name,
+                "time_taken_sec": round(time_taken, 2),
+                "escalation_triggered": escalated,
+                "promoter_risk": final_classification.get("promoter_risk", "UNKNOWN")
+            })
+        )
+        
+    except asyncio.TimeoutError:
+        logger.error(f"Job {job_id} failed: Timed out after 30 seconds")
+        jobs[job_id]["status"] = "timeout"
+        jobs[job_id]["current_step"] = "killed"
+        jobs[job_id]["result"] = {"error": "Research task exceeded 30-second timeout limit"}
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}")
         jobs[job_id]["status"] = "failed"
@@ -390,18 +470,44 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
 
 @app.post("/research", response_model=ResearchResponse)
 async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
+    
+    # 1. Check Rate Limit (Semaphore)
+    if job_semaphore.locked():
+         raise HTTPException(status_code=429, detail="Too many concurrent research tasks. Please try again later.")
+    
+    # 2. Check Cache
+    cache_key = request.company_name.lower().strip()
+    if cache_key in result_cache:
+        cached_data = result_cache[cache_key]
+        if datetime.now() - cached_data["timestamp"] < CACHE_DURATION:
+            job_id = f"cached_{str(uuid.uuid4())[:8]}"
+            jobs[job_id] = {
+                "status": "completed",
+                "current_step": "done",
+                "request_data": request.model_dump(),
+                "result": cached_data["classification"],
+                "risk_signals": cached_data["risk_signals"]
+            }
+            logger.info(json.dumps({"event": "cache_hit", "company": request.company_name}))
+            return ResearchResponse(job_id=job_id, status="completed")
+    
+    # 3. Queue New Job
     job_id = str(uuid.uuid4())
     
-    # Store the job in memory
     jobs[job_id] = {
         "status": "queued",
         "current_step": "queued",
         "request_data": request.model_dump(),
-        "result": None
+        "result": None,
+        "risk_signals": []
     }
     
-    # Kick off the LangGraph agent in the background
-    background_tasks.add_task(execute_research_graph, job_id, request)
+    # Background worker with semaphore acquisition
+    async def run_with_semaphore():
+        async with job_semaphore:
+            await execute_research_graph(job_id, request)
+            
+    background_tasks.add_task(run_with_semaphore)
     
     return ResearchResponse(job_id=job_id, status="running")
 
@@ -412,11 +518,36 @@ async def get_research_status(job_id: str):
     
     job_data = jobs[job_id]
     
+@app.get("/research/stats", response_model=StatsResponse)
+async def get_system_stats():
+    total_jobs = stats["total_jobs_run"]
+    avg_time = stats["total_time_seconds"] / total_jobs if total_jobs > 0 else 0.0
+    esc_rate = (stats["escalated_jobs"] / total_jobs) * 100 if total_jobs > 0 else 0.0
+    
+    return StatsResponse(
+        total_jobs_run=total_jobs,
+        avg_time_seconds=round(avg_time, 2),
+        escalation_rate=round(esc_rate, 2)
+    )
+
+@app.get("/research/{job_id}", response_model=JobStatusResponse)
+async def get_research_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job_data = jobs[job_id]
+    
+    # To support frontend parity, merge risk_signals directly into the response payload
+    # alongside the primary classification object
+    final_payload = job_data.get("result", {})
+    if isinstance(final_payload, dict) and "risk_signals" in job_data and job_data["risk_signals"]:
+        final_payload["raw_risk_signals"] = job_data["risk_signals"]
+        
     return JobStatusResponse(
         job_id=job_id,
         status=job_data["status"],
         current_step=job_data.get("current_step", ""),
-        result=job_data.get("result", {})
+        result=final_payload
     )
 
 if __name__ == "__main__":
