@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
 
+load_dotenv()
+
 # Configure structured logging
 logging.basicConfig(
     level=logging.INFO,
@@ -511,13 +513,6 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
     
     return ResearchResponse(job_id=job_id, status="running")
 
-@app.get("/research/{job_id}", response_model=JobStatusResponse)
-async def get_research_status(job_id: str):
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job_data = jobs[job_id]
-    
 @app.get("/research/stats", response_model=StatsResponse)
 async def get_system_stats():
     total_jobs = stats["total_jobs_run"]
