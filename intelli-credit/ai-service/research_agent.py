@@ -3,12 +3,13 @@ import os
 import asyncio
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TypedDict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from tavily import AsyncTavilyClient
 from dotenv import load_dotenv
+from langgraph.graph import StateGraph, END
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +43,16 @@ class JobStatusResponse(BaseModel):
     job_id: str
     status: str
     result: Optional[Dict[str, Any]] = None
+
+# LangGraph state schema
+class ResearchState(TypedDict):
+    company_name: str
+    promoter_names: List[str]
+    industry: str
+    search_results: Dict[str, List[Any]] # Any because we'll convert SearchResult to dict
+    escalation_triggered: bool
+    escalation_results: Dict[str, List[Any]]
+    risk_signals: List[str]
 
 class SearchResult(BaseModel):
     title: str
@@ -138,6 +149,111 @@ async def run_parallel_searches(
     # Zip the keys back with their respective results
     return dict(zip(queries.keys(), results_list))
 
+# --- LangGraph Nodes ---
+
+async def run_base_searches(state: ResearchState) -> ResearchState:
+    logger.info("Node: run_base_searches")
+    tool = TavilySearchTool()
+    results = await run_parallel_searches(
+        tool, 
+        state["company_name"], 
+        state["promoter_names"], 
+        state["industry"]
+    )
+    
+    # Convert SearchResult objects to dicts for JSON serialization in state
+    dict_results = {}
+    for key, result_list in results.items():
+        dict_results[key] = [r.model_dump() for r in result_list]
+        
+    return {"search_results": dict_results}
+
+async def check_escalation(state: ResearchState) -> ResearchState:
+    logger.info("Node: check_escalation")
+    keywords = ["fraud", "NCLT", "NPA", "default", "arrested", "ED", "CBI", "Enforcement Directorate", "money laundering"]
+    keywords_lower = [k.lower() for k in keywords]
+    
+    triggered = False
+    
+    # Scan all base search results for keywords
+    for category, results_list in state["search_results"].items():
+        for result in results_list:
+            text_to_check = f"{result['title']} {result['content']}".lower()
+            if any(keyword in text_to_check for keyword in keywords_lower):
+                logger.warning(f"Escalation triggered by keyword match in {category}: {result['title']}")
+                triggered = True
+                break
+        if triggered:
+            break
+            
+    return {"escalation_triggered": triggered}
+
+def should_escalate(state: ResearchState) -> str:
+    if state.get("escalation_triggered", False):
+        return "run_escalation_searches"
+    return "extract_risk_signals"
+
+async def run_escalation_searches(state: ResearchState) -> ResearchState:
+    logger.info("Node: run_escalation_searches")
+    tool = TavilySearchTool()
+    
+    primary_promoter = state["promoter_names"][0] if state["promoter_names"] else "Unknown Promoter"
+    company_name = state["company_name"]
+    
+    queries = {
+        "nclt_cases": f"{primary_promoter} NCLT case number status site:nclt.gov.in OR site:ecourts.gov.in",
+        "ed_attachments": f"{company_name} enforcement directorate ED attachment"
+    }
+    
+    tasks = [
+        tool.search_with_retry(query, retries=2, max_results=3) 
+        for query in queries.values()
+    ]
+    
+    results_list = await asyncio.gather(*tasks)
+    
+    dict_results = {}
+    for key, r_list in zip(queries.keys(), results_list):
+        dict_results[key] = [r.model_dump() for r in r_list]
+        
+    return {"escalation_results": dict_results}
+
+async def extract_risk_signals(state: ResearchState) -> ResearchState:
+    logger.info("Node: extract_risk_signals")
+    # A simple mock extraction for now. In reality, we'd pass all `search_results`
+    # and `escalation_results` to an LLM like Anthropic to generate these signals.
+    
+    signals = []
+    if state.get("escalation_triggered", False):
+        signals.append("Automated escalation was triggered due to negative keywords found in base search.")
+        
+        # Check escalation results specifically
+        if "escalation_results" in state:
+            for cat, results in state["escalation_results"].items():
+                if results:
+                    signals.append(f"Found deep records in {cat}.")
+            
+    if not signals:
+        signals.append("No immediate red flags detected.")
+        
+    return {"risk_signals": signals}
+
+# --- Compile Graph ---
+workflow = StateGraph(ResearchState)
+
+workflow.add_node("run_base_searches", run_base_searches)
+workflow.add_node("check_escalation", check_escalation)
+workflow.add_node("run_escalation_searches", run_escalation_searches)
+workflow.add_node("extract_risk_signals", extract_risk_signals)
+
+workflow.set_entry_point("run_base_searches")
+workflow.add_edge("run_base_searches", "check_escalation")
+workflow.add_conditional_edges("check_escalation", should_escalate)
+workflow.add_edge("run_escalation_searches", "extract_risk_signals")
+workflow.add_edge("extract_risk_signals", END)
+
+research_graph = workflow.compile()
+
 @app.post("/research", response_model=ResearchResponse)
 async def start_research(request: ResearchRequest):
     job_id = str(uuid.uuid4())
@@ -167,21 +283,27 @@ async def get_research_status(job_id: str):
 
 if __name__ == "__main__":
     async def test():
-        tool = TavilySearchTool()
-        print("Testing run_parallel_searches...")
+        print("\n--- Testing LangGraph Agent ---")
         
         company = "Reliance Industries"
         promoters = ["Mukesh Ambani"]
         industry = "Energy and Telecom"
         
-        results_dict = await run_parallel_searches(tool, company, promoters, industry)
+        initial_state = {
+            "company_name": company,
+            "promoter_names": promoters,
+            "industry": industry,
+            "search_results": {},
+            "escalation_triggered": False,
+            "escalation_results": {},
+            "risk_signals": []
+        }
         
-        for category, search_results in results_dict.items():
-            print(f"\n--- Category: {category.upper()} ---")
-            if not search_results:
-                print("No results found.")
-            for i, r in enumerate(search_results):
-                print(f"{i+1}. {r.title} (Score: {r.score:.2f})")
-                print(f"URL: {r.url}")
+        final_state = await research_graph.ainvoke(initial_state)
+        
+        print(f"\nEscalation Triggered: {final_state['escalation_triggered']}")
+        print("\nRisk Signals:")
+        for signal in final_state['risk_signals']:
+            print(f"- {signal}")
             
     asyncio.run(test())
