@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from typing import List, Dict, Any, Optional, TypedDict
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from tavily import AsyncTavilyClient
@@ -44,6 +44,7 @@ class ResearchResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str
+    current_step: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
 
 # LangGraph state schema
@@ -314,11 +315,38 @@ Respond ONLY with this JSON:
 # --- Compile Graph ---
 workflow = StateGraph(ResearchState)
 
-workflow.add_node("run_base_searches", run_base_searches)
-workflow.add_node("check_escalation", check_escalation)
-workflow.add_node("run_escalation_searches", run_escalation_searches)
-workflow.add_node("extract_risk_signals", extract_risk_signals)
-workflow.add_node("classify_risks", classify_risks)
+# Wrap nodes to update job state during execution
+def make_tracked_node(node_name: str, original_node):
+    async def tracked_node(state: ResearchState) -> ResearchState:
+        # We can pass the job_id in the state, but since these are stateless functions normally,
+        # we'll use a hack to grab job_id if we inject it into the state or closure.
+        # Alternatively, we just log it. For this scaffold, we'll update the global job store
+        # if the job_id is present in the state (we'll add it to ResearchState temporarily).
+        job_id = state.get("job_id")
+        if job_id and job_id in jobs:
+            jobs[job_id]["current_step"] = node_name
+        
+        return await original_node(state)
+    return tracked_node
+
+# Add job_id to typedef for tracking
+class ResearchState(TypedDict):
+    job_id: str
+    company_name: str
+    promoter_names: List[str]
+    industry: str
+    search_results: Dict[str, List[Any]]
+    escalation_triggered: bool
+    escalation_results: Dict[str, List[Any]]
+    risk_signals: List[str]
+    classification: Dict[str, Any]
+
+
+workflow.add_node("run_base_searches", make_tracked_node("run_base_searches", run_base_searches))
+workflow.add_node("check_escalation", make_tracked_node("check_escalation", check_escalation))
+workflow.add_node("run_escalation_searches", make_tracked_node("run_escalation_searches", run_escalation_searches))
+workflow.add_node("extract_risk_signals", make_tracked_node("extract_risk_signals", extract_risk_signals))
+workflow.add_node("classify_risks", make_tracked_node("classify_risks", classify_risks))
 
 workflow.set_entry_point("run_base_searches")
 workflow.add_edge("run_base_searches", "check_escalation")
@@ -329,45 +357,53 @@ workflow.add_edge("classify_risks", END)
 
 research_graph = workflow.compile()
 
+async def execute_research_graph(job_id: str, request: ResearchRequest):
+    try:
+        jobs[job_id]["status"] = "running"
+        jobs[job_id]["current_step"] = "initializing"
+        
+        initial_state = {
+            "job_id": job_id,
+            "company_name": request.company_name,
+            "promoter_names": request.promoter_names,
+            "industry": request.industry,
+            "search_results": {},
+            "escalation_triggered": False,
+            "escalation_results": {},
+            "risk_signals": [],
+            "classification": {}
+        }
+        
+        # Stream the graph so we could theoretically intercept events, 
+        # but our tracked nodes handle the step updates.
+        final_state = await research_graph.ainvoke(initial_state)
+        
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["current_step"] = "done"
+        jobs[job_id]["result"] = final_state.get("classification", {})
+        
+    except Exception as e:
+        logger.error(f"Job {job_id} failed: {e}")
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["current_step"] = "error"
+        jobs[job_id]["result"] = {"error": str(e)}
+
 @app.post("/research", response_model=ResearchResponse)
-async def start_research(request: ResearchRequest):
+async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
     
     # Store the job in memory
     jobs[job_id] = {
         "status": "queued",
+        "current_step": "queued",
         "request_data": request.model_dump(),
-        "result": None,
-        "classification": None
+        "result": None
     }
     
-    # In a real app, this would be kicked off in a Celery/background task
-    # For now, we'll run it asynchronously in the background via asyncio.create_task
-    # to avoid blocking the HTTP response.
-    async def process_job():
-        try:
-            initial_state = {
-                "company_name": request.company_name,
-                "promoter_names": request.promoter_names,
-                "industry": request.industry,
-                "search_results": {},
-                "escalation_triggered": False,
-                "escalation_results": {},
-                "risk_signals": [],
-                "classification": {}
-            }
-            final_state = await research_graph.ainvoke(initial_state)
-            jobs[job_id]["status"] = "completed"
-            jobs[job_id]["result"] = final_state["risk_signals"]
-            jobs[job_id]["classification"] = final_state.get("classification", {})
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}")
-            jobs[job_id]["status"] = "failed"
-            jobs[job_id]["result"] = {"error": str(e)}
-
-    asyncio.create_task(process_job())
+    # Kick off the LangGraph agent in the background
+    background_tasks.add_task(execute_research_graph, job_id, request)
     
-    return ResearchResponse(job_id=job_id, status="queued")
+    return ResearchResponse(job_id=job_id, status="running")
 
 @app.get("/research/{job_id}", response_model=JobStatusResponse)
 async def get_research_status(job_id: str):
@@ -376,21 +412,11 @@ async def get_research_status(job_id: str):
     
     job_data = jobs[job_id]
     
-    # You can return the full classification inside the result object or top-level.
-    # Let's include both signals and classification in the generic result dict.
-    result_payload = None
-    if job_data["status"] == "completed":
-        result_payload = {
-            "classification": job_data.get("classification", {}),
-            "risk_signals": job_data.get("result", [])
-        }
-    elif job_data["status"] == "failed":
-        result_payload = job_data.get("result", {})
-    
     return JobStatusResponse(
         job_id=job_id,
         status=job_data["status"],
-        result=result_payload
+        current_step=job_data.get("current_step", ""),
+        result=job_data.get("result", {})
     )
 
 if __name__ == "__main__":
@@ -402,6 +428,7 @@ if __name__ == "__main__":
         industry = "Energy and Telecom"
         
         initial_state = {
+            "job_id": "test_job_123",
             "company_name": company,
             "promoter_names": promoters,
             "industry": industry,
@@ -411,6 +438,9 @@ if __name__ == "__main__":
             "risk_signals": [],
             "classification": {}
         }
+        
+        # Mock global jobs dict for testing script
+        jobs["test_job_123"] = {}
         
         final_state = await research_graph.ainvoke(initial_state)
         
