@@ -26,7 +26,7 @@ from deep_learning.schemas import (
     ProcessingStatus,
 )
 from deep_learning.page_classifier import classify_pages
-from deep_learning.ocr_engine import ocr_document
+from deep_learning.ocr_engine import ocr_document, merge_document_text
 from deep_learning.info_extractor import extract_structured_info
 
 load_dotenv()
@@ -99,14 +99,19 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
             file_path, classification.ocr_priority_pages, doc_type
         )
 
-        # 3. Combine text: digital pages (PyMuPDF) + OCR pages (DeepSeek-VL2)
-        logger.info(f"[{job_id}] Step 3/4 — Combining text")
-        combined_text = _combine_page_text(classification, ocr_results)
+        # 3. Merge digital text + OCR text in page order (V11 — writes extracted.txt)
+        logger.info(f"[{job_id}] Step 3/4 — Merging document text")
+        merged = merge_document_text(
+            digital_text=classification.digital_text,
+            ocr_results=ocr_results,
+            total_pages=classification.total_pages,
+            job_id=job_id,
+        )
 
         # 4. Structured extraction via Claude
         logger.info(f"[{job_id}] Step 4/4 — Claude structured extraction")
         extraction = await extract_structured_info(
-            combined_text=combined_text,
+            combined_text=merged.full_text,
             doc_type=doc_type,
             page_count=classification.total_pages,
         )
@@ -141,30 +146,6 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
             error_output.model_dump_json(indent=2), encoding="utf-8"
         )
 
-
-def _combine_page_text(classification, ocr_results) -> str:
-    """
-    Merge text from two sources:
-      - DIGITAL pages: text captured by page_classifier (digital_text dict)
-      - OCR pages: raw_text returned by local DeepSeek-VL2
-
-    Returns a single combined string for Claude extraction.
-    """
-    parts: list[str] = []
-
-    for page_info in classification.pages:
-        pn = page_info.page_number  # 0-indexed
-
-        if pn in ocr_results and ocr_results[pn].raw_text:
-            # Use OCR output for scanned pages
-            parts.append(f"--- Page {pn} (OCR) ---\n{ocr_results[pn].raw_text}")
-        elif pn in classification.digital_text:
-            # Use pre-extracted digital text
-            text = classification.digital_text[pn]
-            if text.strip():
-                parts.append(f"--- Page {pn} ---\n{text.strip()}")
-
-    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
