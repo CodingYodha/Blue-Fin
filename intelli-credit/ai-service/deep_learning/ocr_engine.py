@@ -321,3 +321,86 @@ async def ocr_document(
     )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Document text merger (V11 fix — filesystem-based handoff)
+# ---------------------------------------------------------------------------
+
+def merge_document_text(
+    digital_text: Dict[int, str],
+    ocr_results: Dict[int, "OCRPageResult"],
+    total_pages: int,
+    job_id: str,
+) -> "MergedDocument":
+    """
+    Merge digital page text and OCR results into one coherent document.
+
+    Produces a single page-ordered string and writes it to disk so
+    downstream services (Go service, info_extractor) can read from the
+    filesystem instead of passing large payloads over HTTP (V11 fix).
+
+    Args:
+        digital_text: ``{page_num: text}`` dict from page_classifier.
+        ocr_results:  ``{page_num: OCRPageResult}`` dict from ocr_document.
+        total_pages:  Total number of pages in the original PDF.
+        job_id:       Job identifier — used for the output file path.
+
+    Returns:
+        ``MergedDocument`` with full_text, per-page breakdown, and stats.
+    """
+    from pathlib import Path
+    from .schemas import MergedDocument, MergedPage
+
+    pages: list[MergedPage] = []
+    text_parts: list[str] = []
+
+    digital_count = 0
+    ocr_count = 0
+    skipped_count = 0
+    has_failures = False
+
+    for page_num in range(total_pages):
+        if page_num in digital_text:
+            source = "DIGITAL"
+            text = digital_text[page_num]
+            digital_count += 1
+        elif page_num in ocr_results:
+            source = "OCR"
+            text = ocr_results[page_num].raw_text
+            ocr_count += 1
+            if ocr_results[page_num].confidence == "FAILED":
+                has_failures = True
+        else:
+            source = "SKIPPED"
+            text = ""
+            skipped_count += 1
+
+        pages.append(MergedPage(page_number=page_num, source=source, text=text))
+
+        if text.strip():
+            text_parts.append(f"\n\n--- PAGE {page_num} ---\n\n{text.strip()}")
+
+    full_text = "".join(text_parts).strip()
+
+    # Write to filesystem (V11 — downstream reads from disk, not HTTP)
+    output_dir = Path("/tmp/intelli-credit") / job_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    extracted_path = output_dir / "extracted.txt"
+    extracted_path.write_text(full_text, encoding="utf-8")
+    logger.info(
+        f"[{job_id}] Merged document: {total_pages} pages "
+        f"({digital_count} digital, {ocr_count} OCR, {skipped_count} skipped) "
+        f"→ {extracted_path}"
+    )
+
+    return MergedDocument(
+        full_text=full_text,
+        pages=pages,
+        total_pages=total_pages,
+        digital_page_count=digital_count,
+        ocr_page_count=ocr_count,
+        skipped_page_count=skipped_count,
+        has_ocr_failures=has_failures,
+    )
+

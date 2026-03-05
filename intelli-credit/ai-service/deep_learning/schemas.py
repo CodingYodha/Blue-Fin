@@ -152,6 +152,38 @@ class OCRPageResult(BaseModel):
 
 
 # =============================================================================
+# INTERNAL — Merged Document (post-OCR)
+# =============================================================================
+
+class MergedPage(BaseModel):
+    """Single page in the merged document."""
+    page_number: int = Field(..., description="0-indexed page number")
+    source: str = Field(
+        ..., description="'DIGITAL' (PyMuPDF), 'OCR' (DeepSeek), or 'SKIPPED'"
+    )
+    text: str = Field(default="", description="Extracted text for this page")
+
+
+class MergedDocument(BaseModel):
+    """
+    Complete merged document text in page order.
+    Produced by merge_document_text(), consumed by info_extractor.
+    """
+    full_text: str = Field(
+        ..., description="All pages concatenated with page separators"
+    )
+    pages: List[MergedPage] = Field(default_factory=list)
+    total_pages: int = 0
+    digital_page_count: int = 0
+    ocr_page_count: int = 0
+    skipped_page_count: int = 0
+    has_ocr_failures: bool = Field(
+        default=False,
+        description="True if any OCR page returned confidence='FAILED'"
+    )
+
+
+# =============================================================================
 # INTERNAL — Structured Info Extraction (Claude)
 # =============================================================================
 
