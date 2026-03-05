@@ -1,3 +1,4 @@
 /env
 .env
 **/deep_learning/models
+node_modules
