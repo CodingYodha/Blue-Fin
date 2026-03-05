@@ -9,7 +9,6 @@ Endpoints:
 
 import json
 import logging
-import time
 from pathlib import Path
 
 import fitz  # noqa: F401 — ensure PyMuPDF is importable at startup
@@ -17,15 +16,13 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from deep_learning.schemas import (
+from deep_learning import (
+    process_document,
     DocumentProcessingResult,
     JobStatusResponse,
     ProcessDocumentRequest,
     ProcessDocumentResponse,
 )
-from deep_learning.page_classifier import classify_pages
-from deep_learning.ocr_engine import ocr_document, merge_document_text
-from deep_learning.info_extractor import extract_structured_info
 
 load_dotenv()
 
@@ -60,125 +57,6 @@ BASE_PATH = Path("/tmp/intelli-credit")
 
 
 # ---------------------------------------------------------------------------
-# Background processing pipeline
-# ---------------------------------------------------------------------------
-
-async def _process_document(job_id: str, file_path: str, doc_type: str):
-    """
-    Full document processing pipeline (runs in background):
-      1. Classify pages  (PyMuPDF + keyword heuristic)
-      2. OCR scanned pages (DeepSeek-VL2 local)
-      3. Merge text from all pages (writes extracted.txt)
-      4. Extract structured info (Claude — financial + entity in parallel)
-      5. Write result JSON to shared volume
-    """
-    output_dir = BASE_PATH / job_id
-    output_file = output_dir / "ocr_output.json"
-    errors: list[str] = []
-    pipeline_start = time.time()
-
-    try:
-        # Ensure output directory exists
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1. Classify pages
-        logger.info(f"[{job_id}] Step 1/4 — Classifying pages: {file_path}")
-        classification = await classify_pages(file_path, doc_type)
-
-        # Bail early if encrypted
-        if classification.encrypted:
-            raise RuntimeError(
-                f"Encrypted PDF: {classification.encryption_error}"
-            )
-
-        # 2. OCR scanned pages targeted by the classifier
-        logger.info(
-            f"[{job_id}] Step 2/4 — OCR on {classification.estimated_ocr_pages} pages"
-        )
-        ocr_results = await ocr_document(
-            file_path, classification.ocr_priority_pages, doc_type
-        )
-
-        # Track OCR failures
-        for pn, result in ocr_results.items():
-            if result.confidence == "FAILED":
-                errors.append(f"OCR failed on page {pn}")
-
-        # 3. Merge digital text + OCR text in page order (V11 — writes extracted.txt)
-        logger.info(f"[{job_id}] Step 3/4 — Merging document text")
-        merged = merge_document_text(
-            digital_text=classification.digital_text,
-            ocr_results=ocr_results,
-            total_pages=classification.total_pages,
-            job_id=job_id,
-        )
-
-        # 4. Structured extraction via Claude (financial + entity in parallel)
-        logger.info(f"[{job_id}] Step 4/4 — Claude structured extraction")
-        extraction = await extract_structured_info(
-            combined_text=merged.full_text,
-            doc_type=doc_type,
-            page_count=classification.total_pages,
-        )
-
-        # Determine status
-        has_failures = merged.has_ocr_failures or len(errors) > 0
-        has_low_confidence = (
-            extraction.financial_extraction
-            and extraction.financial_extraction.confidence == "LOW"
-        )
-        if has_failures or has_low_confidence:
-            status = "partial"
-        else:
-            status = "success"
-
-        processing_time = time.time() - pipeline_start
-
-        # 5. Build final output and write to disk
-        output = DocumentProcessingResult(
-            job_id=job_id,
-            doc_type=doc_type,
-            status=status,
-            file_path_extracted_text=str(output_dir / "extracted.txt"),
-            page_classification=classification,
-            financial_extraction=extraction.financial_extraction,
-            entity_extraction=extraction.entity_extraction,
-            processing_time_seconds=round(processing_time, 2),
-            errors=errors,
-        )
-
-        output_file.write_text(
-            output.model_dump_json(indent=2), encoding="utf-8"
-        )
-        logger.info(
-            f"[{job_id}] ✅ Processing complete → {output_file} "
-            f"({processing_time:.1f}s, status={status})"
-        )
-
-    except Exception as e:
-        logger.error(f"[{job_id}] ❌ Processing failed: {e}")
-        processing_time = time.time() - pipeline_start
-        errors.append(str(e))
-
-        # Write a minimal failure result
-        from deep_learning.schemas import PageClassificationResult
-
-        error_output = DocumentProcessingResult(
-            job_id=job_id,
-            doc_type=doc_type,
-            status="failed",
-            file_path_extracted_text="",
-            page_classification=PageClassificationResult(total_pages=0),
-            processing_time_seconds=round(processing_time, 2),
-            errors=errors,
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(
-            error_output.model_dump_json(indent=2), encoding="utf-8"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -189,13 +67,13 @@ async def health_check():
 
 
 @app.post("/api/v1/process-document", response_model=ProcessDocumentResponse)
-async def process_document(
+async def post_process_document(
     request: ProcessDocumentRequest,
     background_tasks: BackgroundTasks,
 ):
     """
     Accept a document processing job. Returns immediately while
-    processing runs in the background.
+    processing runs in the background via the orchestrator.
     """
     # Validate file exists
     full_path = Path(request.file_path)
@@ -205,9 +83,9 @@ async def process_document(
             detail=f"File not found: {request.file_path}",
         )
 
-    # Kick off background pipeline
+    # Kick off background pipeline (orchestrator handles all error cases)
     background_tasks.add_task(
-        _process_document,
+        process_document,
         job_id=request.job_id,
         file_path=request.file_path,
         doc_type=request.doc_type,
