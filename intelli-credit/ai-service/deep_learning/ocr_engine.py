@@ -376,7 +376,7 @@ def merge_document_text(
             text = ""
             skipped_count += 1
 
-        pages.append(MergedPage(page_number=page_num, source=source, text=text))
+        pages.append(MergedPage(page_num=page_num, source=source, text=text))
 
         if text.strip():
             text_parts.append(f"\n\n--- PAGE {page_num} ---\n\n{text.strip()}")

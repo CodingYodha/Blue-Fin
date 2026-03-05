@@ -9,7 +9,7 @@ Endpoints:
 
 import json
 import logging
-import os
+import time
 from pathlib import Path
 
 import fitz  # noqa: F401 — ensure PyMuPDF is importable at startup
@@ -18,12 +18,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from deep_learning.schemas import (
-    DocType,
-    DocumentProcessingOutput,
+    DocumentProcessingResult,
     JobStatusResponse,
     ProcessDocumentRequest,
     ProcessDocumentResponse,
-    ProcessingStatus,
 )
 from deep_learning.page_classifier import classify_pages
 from deep_learning.ocr_engine import ocr_document, merge_document_text
@@ -65,17 +63,19 @@ BASE_PATH = Path("/tmp/intelli-credit")
 # Background processing pipeline
 # ---------------------------------------------------------------------------
 
-async def _process_document(job_id: str, file_path: str, doc_type: DocType):
+async def _process_document(job_id: str, file_path: str, doc_type: str):
     """
     Full document processing pipeline (runs in background):
-      1. Classify pages  (PyMuPDF)
-      2. OCR scanned pages (DeepSeek)
-      3. Combine text from all pages
-      4. Extract structured info (Claude)
+      1. Classify pages  (PyMuPDF + keyword heuristic)
+      2. OCR scanned pages (DeepSeek-VL2 local)
+      3. Merge text from all pages (writes extracted.txt)
+      4. Extract structured info (Claude — financial + entity in parallel)
       5. Write result JSON to shared volume
     """
     output_dir = BASE_PATH / job_id
     output_file = output_dir / "ocr_output.json"
+    errors: list[str] = []
+    pipeline_start = time.time()
 
     try:
         # Ensure output directory exists
@@ -99,6 +99,11 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
             file_path, classification.ocr_priority_pages, doc_type
         )
 
+        # Track OCR failures
+        for pn, result in ocr_results.items():
+            if result.confidence == "FAILED":
+                errors.append(f"OCR failed on page {pn}")
+
         # 3. Merge digital text + OCR text in page order (V11 — writes extracted.txt)
         logger.info(f"[{job_id}] Step 3/4 — Merging document text")
         merged = merge_document_text(
@@ -108,7 +113,7 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
             job_id=job_id,
         )
 
-        # 4. Structured extraction via Claude
+        # 4. Structured extraction via Claude (financial + entity in parallel)
         logger.info(f"[{job_id}] Step 4/4 — Claude structured extraction")
         extraction = await extract_structured_info(
             combined_text=merged.full_text,
@@ -116,36 +121,61 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
             page_count=classification.total_pages,
         )
 
+        # Determine status
+        has_failures = merged.has_ocr_failures or len(errors) > 0
+        has_low_confidence = (
+            extraction.financial_extraction
+            and extraction.financial_extraction.confidence == "LOW"
+        )
+        if has_failures or has_low_confidence:
+            status = "partial"
+        else:
+            status = "success"
+
+        processing_time = time.time() - pipeline_start
+
         # 5. Build final output and write to disk
-        # Convert int keys to str for JSON serialization
-        ocr_str_keys = {str(k): v for k, v in ocr_results.items()}
-        output = DocumentProcessingOutput(
+        output = DocumentProcessingResult(
             job_id=job_id,
-            status=ProcessingStatus.COMPLETED,
             doc_type=doc_type,
+            status=status,
+            file_path_extracted_text=str(output_dir / "extracted.txt"),
             page_classification=classification,
-            ocr_results=ocr_str_keys,
-            extraction=extraction,
+            financial_extraction=extraction.financial_extraction,
+            entity_extraction=extraction.entity_extraction,
+            processing_time_seconds=round(processing_time, 2),
+            errors=errors,
         )
 
         output_file.write_text(
             output.model_dump_json(indent=2), encoding="utf-8"
         )
-        logger.info(f"[{job_id}] ✅ Processing complete → {output_file}")
+        logger.info(
+            f"[{job_id}] ✅ Processing complete → {output_file} "
+            f"({processing_time:.1f}s, status={status})"
+        )
 
     except Exception as e:
         logger.error(f"[{job_id}] ❌ Processing failed: {e}")
-        error_output = DocumentProcessingOutput(
+        processing_time = time.time() - pipeline_start
+        errors.append(str(e))
+
+        # Write a minimal failure result
+        from deep_learning.schemas import PageClassificationResult
+
+        error_output = DocumentProcessingResult(
             job_id=job_id,
-            status=ProcessingStatus.FAILED,
             doc_type=doc_type,
-            error=str(e),
+            status="failed",
+            file_path_extracted_text="",
+            page_classification=PageClassificationResult(total_pages=0),
+            processing_time_seconds=round(processing_time, 2),
+            errors=errors,
         )
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file.write_text(
             error_output.model_dump_json(indent=2), encoding="utf-8"
         )
-
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +216,8 @@ async def process_document(
     return ProcessDocumentResponse(
         status="processing",
         job_id=request.job_id,
+        message=f"Document processing started for job {request.job_id}. "
+                f"Poll /api/v1/status/{request.job_id} for results.",
     )
 
 
@@ -200,21 +232,22 @@ async def get_status(job_id: str):
     if not output_file.exists():
         return JobStatusResponse(
             job_id=job_id,
-            status=ProcessingStatus.PROCESSING,
+            status="processing",
         )
 
     try:
         raw = output_file.read_text(encoding="utf-8")
         data = json.loads(raw)
+        result = DocumentProcessingResult(**data)
         return JobStatusResponse(
             job_id=job_id,
-            status=ProcessingStatus(data.get("status", "completed")),
-            result=data,
+            status=result.status,
+            result=result,
         )
     except Exception as e:
         logger.error(f"Failed to read output file for {job_id}: {e}")
         return JobStatusResponse(
             job_id=job_id,
-            status=ProcessingStatus.FAILED,
+            status="failed",
             error=str(e),
         )

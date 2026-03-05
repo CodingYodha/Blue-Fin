@@ -26,7 +26,6 @@ from typing import Optional
 from anthropic import AsyncAnthropic
 
 from .schemas import (
-    DocType,
     EntityExtraction,
     ExtractionResult,
     FinancialExtraction,

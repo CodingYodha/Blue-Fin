@@ -41,11 +41,8 @@ import fitz  # PyMuPDF
 from thefuzz import fuzz
 
 from .schemas import (
-    DocType,
-    OCRDecision,
     PageClassification,
     PageClassificationResult,
-    PageType,
 )
 
 logger = logging.getLogger("deep_learning.page_classifier")
@@ -193,7 +190,7 @@ async def classify_pages(
 
     # --- Phase 1: extract text and classify each page ---
     page_texts: List[str] = []
-    page_types: List[PageType] = []
+    page_types: List[str] = []  # "digital", "scanned", "partial", "blank"
     keyword_flags: List[bool] = []
 
     for page_num in range(total):
@@ -204,13 +201,13 @@ async def classify_pages(
 
         # Classify by character count
         if char_count == 0:
-            page_types.append(PageType.BLANK)
+            page_types.append("blank")
         elif char_count < _SCANNED_THRESHOLD:
-            page_types.append(PageType.SCANNED)
+            page_types.append("scanned")
         elif char_count <= _DIGITAL_THRESHOLD:
-            page_types.append(PageType.PARTIAL)
+            page_types.append("partial")
         else:
-            page_types.append(PageType.DIGITAL)
+            page_types.append("digital")
 
         # Check for financial keywords (exact + fuzzy)
         keyword_flags.append(_has_financial_keywords(text))
@@ -234,30 +231,30 @@ async def classify_pages(
         neighbor_kw = prev_kw or next_kw
 
         # Default: no OCR needed
-        ocr_decision = OCRDecision.NOT_APPLICABLE
+        ocr_decision = "n/a"
 
-        if p_type == PageType.DIGITAL:
+        if p_type == "digital":
             # Text is good — store it, no OCR
             digital_pages.append(i)
             digital_text[i] = page_texts[i]
 
-        elif p_type in (PageType.SCANNED, PageType.PARTIAL):
+        elif p_type in ("scanned", "partial"):
             # --- Doc-type overrides ---
-            if doc_type == DocType.BANK_STATEMENT or doc_type == "bank_statement":
+            if doc_type == "bank_statement":
                 # Bank statements are digital CSVs; skip OCR entirely
-                ocr_decision = OCRDecision.OCR_SKIP
+                ocr_decision = "ocr_skip"
                 ocr_skip.append(i)
-            elif doc_type == DocType.GST_FILING or doc_type == "gst_filing":
+            elif doc_type == "gst_filing":
                 # GST filings: every scanned page is important
-                ocr_decision = OCRDecision.OCR_PRIORITY
+                ocr_decision = "ocr_priority"
                 ocr_priority.append(i)
             else:
                 # Standard keyword + neighbor heuristic
                 if has_kw or neighbor_kw:
-                    ocr_decision = OCRDecision.OCR_PRIORITY
+                    ocr_decision = "ocr_priority"
                     ocr_priority.append(i)
                 else:
-                    ocr_decision = OCRDecision.OCR_SKIP
+                    ocr_decision = "ocr_skip"
                     ocr_skip.append(i)
 
         # BLANK pages get NOT_APPLICABLE — nothing to do

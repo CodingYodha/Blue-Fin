@@ -3,27 +3,21 @@ Deep Learning module — Document Intelligence for Intelli-Credit.
 
 Sub-modules:
   - page_classifier : PyMuPDF smart page targeting (V6 fix)
-  - ocr_engine      : DeepSeek-OCR integration for scanned pages
-  - info_extractor  : Claude-based structured financial extraction
-  - schemas         : Pydantic models for all I/O
+  - ocr_engine      : DeepSeek-VL2 local OCR for scanned pages
+  - info_extractor  : Claude-based structured financial + entity extraction
+  - schemas         : Pydantic v2 models for all I/O
 """
 
 from .schemas import (
-    DocType,
-    OCRDecision,
-    ProcessingStatus,
     ProcessDocumentRequest,
     ProcessDocumentResponse,
     JobStatusResponse,
-    DocumentProcessingOutput,
+    DocumentProcessingResult,
 )
 
 __all__ = [
-    "DocType",
-    "OCRDecision",
-    "ProcessingStatus",
     "ProcessDocumentRequest",
     "ProcessDocumentResponse",
     "JobStatusResponse",
-    "DocumentProcessingOutput",
+    "DocumentProcessingResult",
 ]
