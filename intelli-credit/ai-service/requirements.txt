@@ -2,7 +2,9 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-pydantic
+pydantic>=2.0
+httpx
+aiofiles
 
 # PDF processing
 PyMuPDF
@@ -12,10 +14,13 @@ python-Levenshtein
 # LLM / AI
 anthropic
 
-# Local DeepSeek-VL2 inference
-unsloth
-Pillow
+# Local DeepSeek-VL2 inference (GPU)
 torch
+unsloth[cu121]
+transformers>=4.40.0
+sentencepiece
+protobuf
+Pillow
 
 # Research agent (existing)
 tavily-python
