@@ -1,0 +1,17 @@
+services:
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "8001:8001"
+    env_file: .env
+    volumes:
+      - /tmp/intelli-credit:/tmp/intelli-credit
+      - ${DEEPSEEK_MODEL_PATH}:/models/deepseek-vl2-tiny:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on: []
