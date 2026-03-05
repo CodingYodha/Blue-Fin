@@ -187,54 +187,136 @@ class MergedDocument(BaseModel):
 # INTERNAL — Structured Info Extraction (Claude)
 # =============================================================================
 
-class ExtractedFinancials(BaseModel):
-    """Structured financial data extracted by Claude from document text."""
-    revenue_fy: Optional[Dict[str, Optional[float]]] = Field(
-        default=None,
-        description="Revenue by fiscal year, e.g. {'FY2022': 48.2, 'FY2023': 44.1, 'FY2024': 41.0}"
+# --- Financial Extraction sub-models ---
+
+class FYValue(BaseModel):
+    """A financial figure with fiscal year breakdown (V4 fix: null if uncertain)."""
+    fy_current: Optional[float] = None
+    fy_previous: Optional[float] = None
+    fy_two_years_ago: Optional[float] = None
+    unit_in_document: Optional[str] = Field(
+        default=None, description="Original unit in document: 'Lakhs', 'Crores', 'Rs.'"
     )
-    ebitda_margin: Optional[float] = None
-    net_profit_margin: Optional[float] = None
-    total_debt_crore: Optional[float] = None
-    net_worth_crore: Optional[float] = None
-    dscr: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    interest_coverage_ratio: Optional[float] = None
-    current_ratio: Optional[float] = None
 
 
-class ExtractedEntities(BaseModel):
-    """Named entities extracted from the document."""
-    company_name: Optional[str] = None
-    cin: Optional[str] = None
-    promoter_names: List[str] = Field(default_factory=list)
-    directors: List[str] = Field(default_factory=list)
-    auditor: Optional[str] = None
-    related_parties: List[str] = Field(default_factory=list)
+class DebtSnapshot(BaseModel):
+    """Point-in-time debt or net worth figure."""
+    value: Optional[float] = Field(default=None, description="Value in Crores")
+    as_of_date: Optional[str] = None
 
 
-class ExtractedRiskSignals(BaseModel):
-    """Risk-related signals extracted from the document."""
-    auditor_qualifications: List[str] = Field(default_factory=list)
-    contingent_liabilities: List[str] = Field(default_factory=list)
-    covenant_breaches: List[str] = Field(default_factory=list)
-    litigation_mentions: List[str] = Field(default_factory=list)
-    going_concern_flag: bool = False
-
-
-class ExtractionResult(BaseModel):
-    """Complete structured extraction output for a document."""
-    doc_type: DocType
-    financials: Optional[ExtractedFinancials] = None
-    entities: Optional[ExtractedEntities] = None
-    risk_signals: Optional[ExtractedRiskSignals] = None
-    raw_text_pages: int = Field(
-        default=0, description="Total pages whose text was used for extraction"
-    )
+class FinancialExtraction(BaseModel):
+    """
+    Structured financial data extracted by Claude.
+    V4 fix: every field is nullable — Claude returns null rather than guess.
+    """
+    doc_type: str
+    extraction_model: str = "claude-haiku-4-5-20251001"
     confidence: str = Field(
         default="HIGH",
-        description="HIGH if Go-service cross-verified; LOW if manual check needed"
+        description="HIGH if <4 critical nulls, LOW if >=4 critical fields are null"
     )
+
+    # Annual Report fields
+    revenue: Optional[FYValue] = None
+    ebitda: Optional[FYValue] = None
+    pat: Optional[FYValue] = None
+    total_debt: Optional[DebtSnapshot] = None
+    net_worth: Optional[DebtSnapshot] = None
+    current_assets: Optional[float] = None
+    current_liabilities: Optional[float] = None
+    ebit: Optional[float] = None
+    interest_expense: Optional[float] = None
+    operating_cash_flow: Optional[float] = None
+    debt_service: Optional[float] = None
+    auditor_qualification: Optional[str] = None
+    auditor_name: Optional[str] = None
+    fiscal_year_end: Optional[str] = None
+    extraction_notes: Optional[str] = None
+
+    # GST Filing fields
+    gst_turnover_declared: Optional[float] = None
+    itc_claimed_3b: Optional[float] = None
+    period_covered: Optional[str] = None
+    gstin: Optional[str] = None
+
+    # Rating Report fields
+    rating_assigned: Optional[str] = None
+    rating_outlook: Optional[str] = None
+    rating_date: Optional[str] = None
+    rating_agency: Optional[str] = None
+    key_rationale_summary: Optional[str] = None
+    previous_rating: Optional[str] = None
+
+
+# --- Entity Extraction sub-models ---
+
+class PromoterEntity(BaseModel):
+    """A promoter/director entity."""
+    name: str
+    designation: Optional[str] = None
+    din: Optional[str] = None
+
+
+class RelatedPartyEntity(BaseModel):
+    """A related party with transaction details."""
+    name: str
+    relationship: Optional[str] = None
+    transaction_amount_crore: Optional[float] = None
+
+
+class SubsidiaryEntity(BaseModel):
+    """A subsidiary company."""
+    name: str
+    cin: Optional[str] = None
+
+
+class LenderEntity(BaseModel):
+    """An existing lender/bank facility."""
+    bank_name: str
+    facility_type: Optional[str] = None
+    amount_crore: Optional[float] = None
+
+
+class GuarantorEntity(BaseModel):
+    """A guarantor for the borrower."""
+    name: str
+    relationship_to_borrower: Optional[str] = None
+
+
+class AuditorEntity(BaseModel):
+    """Auditor information."""
+    name: Optional[str] = None
+    firm: Optional[str] = None
+
+
+class EntityExtraction(BaseModel):
+    """
+    Named entities extracted by Claude for the Entity Graph module.
+    All entities are exact legal names as stated in the document.
+    """
+    source_doc_type: str
+    entity_count: int = 0
+    extraction_model: str = "claude-haiku-4-5-20251001"
+
+    company_name: Optional[str] = None
+    cin: Optional[str] = None
+    promoters: List[PromoterEntity] = Field(default_factory=list)
+    related_parties: List[RelatedPartyEntity] = Field(default_factory=list)
+    subsidiaries: List[SubsidiaryEntity] = Field(default_factory=list)
+    existing_lenders: List[LenderEntity] = Field(default_factory=list)
+    collateral_descriptions: List[str] = Field(default_factory=list)
+    guarantors: List[GuarantorEntity] = Field(default_factory=list)
+    auditor: Optional[AuditorEntity] = None
+
+
+# --- Combined extraction result ---
+
+class ExtractionResult(BaseModel):
+    """Combined financial + entity extraction output."""
+    doc_type: str
+    financial_extraction: Optional[FinancialExtraction] = None
+    entity_extraction: Optional[EntityExtraction] = None
 
 
 # =============================================================================
