@@ -1,0 +1,74 @@
+{
+  "model_1_features": [
+    "Revenue_Growth_YoY",
+    "EBITDA_Margin",
+    "Net_Profit_Margin",
+    "Debt_to_Equity",
+    "Interest_Coverage_Ratio",
+    "Current_Ratio",
+    "DSCR",
+    "Cash_Flow_Stability_Index",
+    "DSCR_vs_Sector_Threshold",
+    "DE_vs_Sector_Max",
+    "EBITDA_vs_Floor",
+    "Revenue_Log",
+    "Rating_Score",
+    "Sector_Encoded"
+  ],
+  "model_2_features": [
+    "GST_Filing_Delay_Days",
+    "GST_vs_Bank_Variance_Pct",
+    "GSTR_2A_3B_ITC_Mismatch_Pct",
+    "Historical_Defaults",
+    "Rating_Downgrades_Count",
+    "Payment_Delays_Days",
+    "Tax_Compliance_Score",
+    "Round_Trip_Transaction_Count",
+    "Cash_Deposit_Ratio",
+    "GST_Scrutiny_Notice_Flag",
+    "GST_Variance_vs_Sector",
+    "Sector_Encoded"
+  ],
+  "model_3_features": [
+    "Industry_Growth_Rate",
+    "Sector_Volatility_Beta",
+    "Regulatory_Pressure_Enc",
+    "Commodity_Exposure_Index",
+    "Supply_Chain_Risk_Score",
+    "Sector_News_Sentiment",
+    "Regulatory_Action_Flag",
+    "Sector_Encoded",
+    "Revenue_Log"
+  ],
+  "model_4_features": [
+    "Litigation_Count",
+    "NCLT_Active_Flag",
+    "Fraud_Keywords_Count",
+    "Negative_News_Sentiment",
+    "Promoter_Disputes_Flag",
+    "Governance_Issues_Flag",
+    "Related_Party_Anomaly_Flag",
+    "DIN_Disqualification_Flag",
+    "Auditor_Qualified_Opinion_Flag",
+    "SARFAESI_Action_Flag",
+    "Sector_Encoded"
+  ],
+  "meta_features": [
+    "pd_m1",
+    "pd_m2",
+    "pd_m3",
+    "pd_m4",
+    "final_score"
+  ],
+  "decision_thresholds": {
+    "approve": 75,
+    "conditional": 55,
+    "reject": 0
+  },
+  "score_weights": {
+    "financial_health_max": 40,
+    "credit_behaviour_max": 30,
+    "external_risk_max": 20,
+    "text_signals_max": 10
+  }
+}
