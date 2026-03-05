@@ -10,6 +10,7 @@ Sub-modules:
 
 from .schemas import (
     DocType,
+    OCRDecision,
     ProcessingStatus,
     ProcessDocumentRequest,
     ProcessDocumentResponse,
@@ -19,6 +20,7 @@ from .schemas import (
 
 __all__ = [
     "DocType",
+    "OCRDecision",
     "ProcessingStatus",
     "ProcessDocumentRequest",
     "ProcessDocumentResponse",

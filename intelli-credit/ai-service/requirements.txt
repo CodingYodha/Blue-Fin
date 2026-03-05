@@ -6,6 +6,8 @@ pydantic
 
 # PDF processing
 PyMuPDF
+thefuzz
+python-Levenshtein
 
 # LLM / AI
 anthropic

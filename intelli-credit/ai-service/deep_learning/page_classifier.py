@@ -1,24 +1,48 @@
 """
-Smart Page Targeting — PyMuPDF-based page classifier.
+Smart Page Targeting — PyMuPDF-based page classifier (V6 fix).
 
-Architecture doc Section 2 / V6 fix:
-  Instead of sending entire PDFs to DeepSeek-OCR (3B+ param model),
-  classify each page first:
-    1. Text-rich (PyMuPDF extracts >200 chars)  → skip OCR
-    2. Scanned  (PyMuPDF extracts <50 chars)    → candidate for OCR
-    3. Blank    (0 chars)                        → skip entirely
+=============================================================================
+ARCHITECTURE DOC: Section 2 / Vulnerability V6
+=============================================================================
+DeepSeek-OCR 2 is a 3B+ parameter vision-language model.  Processing a
+100-page scanned document takes 15-20 minutes.  The V6 fix uses PyMuPDF
+(fitz) to scan every page cheaply first (zero cost, milliseconds) and
+only routes pages that are BOTH scanned AND financially relevant to the
+expensive OCR model.
 
-  Among scanned pages, only those adjacent to financial keywords
-  ('Balance Sheet', 'Profit', 'GSTR', 'Turnover', etc.) are sent to OCR.
-  This reduces a 100-page PDF from 15-20 min OCR to 15-30 seconds.
+RESULT: 100-page PDF → typically 3-6 pages sent to OCR → 15-30 seconds
+instead of 15-20 minutes.
+
+Classification thresholds:
+  >200 chars  → DIGITAL   (born-digital, PyMuPDF text is sufficient)
+  50-200 chars → PARTIAL   (maybe OCR-useful, lower priority)
+  <50 chars   → SCANNED   (image-based, needs OCR)
+  0 chars     → BLANK     (skip)
+
+OCR targeting heuristic:
+  For SCANNED/PARTIAL pages, check if financial keywords appear on:
+    (a) the page itself (even garbled text may contain fragments)
+    (b) the immediately preceding page
+    (c) the immediately following page
+  If yes → OCR_PRIORITY.  If no → OCR_SKIP.
+
+Doc-type overrides:
+  bank_statement → no OCR needed (digital CSVs)
+  gst_filing     → all SCANNED pages become OCR_PRIORITY (every page matters)
+
+=============================================================================
 """
 
 import logging
-from typing import List
+from typing import Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
 
+from thefuzz import fuzz
+
 from .schemas import (
+    DocType,
+    OCRDecision,
     PageClassification,
     PageClassificationResult,
     PageType,
@@ -26,115 +50,245 @@ from .schemas import (
 
 logger = logging.getLogger("deep_learning.page_classifier")
 
-# Keywords that indicate a page contains critical financial tables.
-# When a scanned page is adjacent to (or contains fragments of) these keywords,
-# it is prioritised for OCR.
-FINANCIAL_KEYWORDS = [
-    "balance sheet",
-    "profit and loss",
-    "profit & loss",
-    "p&l",
-    "cash flow",
-    "schedule of",
-    "notes to accounts",
-    "gstr",
-    "turnover",
-    "revenue from operations",
-    "related party",
-    "contingent liabilities",
-    "auditor",
-    "debt service",
-    "secured loans",
-    "unsecured loans",
-    "borrowings",
-    "net worth",
+# ---------------------------------------------------------------------------
+# Financial keyword list
+# Covers terms from Balance Sheet, P&L, GST filings, audit notes, and
+# corporate governance sections of Indian Annual Reports.
+# ---------------------------------------------------------------------------
+FINANCIAL_KEYWORDS: List[str] = [
+    "Balance Sheet",
+    "Profit",
+    "Loss",
+    "EBITDA",
+    "GSTR",
+    "Turnover",
+    "Revenue",
+    "Cash Flow",
+    "Borrowings",
+    "Debt",
+    "DSCR",
+    "Equity",
+    "Liabilities",
+    "Assets",
+    "Auditor",
+    "Director",
+    "Promoter",
+    "Related Party",
+    "Collateral",
 ]
 
-# Thresholds (from V6 hardening)
-TEXT_RICH_THRESHOLD = 200   # chars
-SCANNED_THRESHOLD = 50      # chars
+# Pre-compute lower-case versions for exact matching
+_KEYWORDS_LOWER: List[str] = [kw.lower() for kw in FINANCIAL_KEYWORDS]
+
+# Fuzzy-match threshold (0-100).  80 catches OCR-garbled variants like
+# "Balanc Sheet" or "Profi & Loss" while avoiding false positives.
+_FUZZY_THRESHOLD: int = 80
+
+# Character-count thresholds for page classification
+_DIGITAL_THRESHOLD: int = 200
+_SCANNED_THRESHOLD: int = 50
 
 
-async def classify_pages(file_path: str) -> PageClassificationResult:
+# ---------------------------------------------------------------------------
+# Keyword detection (exact + fuzzy)
+# ---------------------------------------------------------------------------
+
+def _has_financial_keywords(text: str) -> bool:
     """
-    Open a PDF with PyMuPDF, classify every page, and decide which
-    scanned pages should be sent to DeepSeek-OCR.
+    Check whether ``text`` contains any financial keyword.
 
-    Returns a PageClassificationResult with per-page detail and
-    the final list of page numbers targeted for OCR.
+    Uses a two-stage strategy:
+      1. **Exact match** (fast): case-insensitive substring search.
+      2. **Fuzzy match** (slower, run only if exact fails): splits text into
+         word n-grams and compares each against the keyword list with
+         ``thefuzz.fuzz.ratio``.  This catches OCR-garbled fragments like
+         "Balanc Sheet" (ratio ≈ 85 vs "Balance Sheet").
+
+    Args:
+        text: Raw text extracted from a PDF page by PyMuPDF.
+
+    Returns:
+        True if at least one financial keyword is detected.
     """
-    doc = fitz.open(file_path)
-    pages: List[PageClassification] = []
+    text_lower = text.lower()
 
-    text_rich_count = 0
-    scanned_count = 0
-    blank_count = 0
-    ocr_targets: List[int] = []
+    # --- Stage 1: exact substring match ---
+    for kw in _KEYWORDS_LOWER:
+        if kw in text_lower:
+            return True
 
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text = page.get_text("text") or ""
-        char_count = len(text.strip())
+    # --- Stage 2: fuzzy match on word windows ---
+    # Only run if the page has some (but garbled) text — i.e. PARTIAL range.
+    if len(text_lower) < 10:
+        return False
 
-        # --- classify ---
-        if char_count == 0:
-            page_type = PageType.BLANK
-            blank_count += 1
-        elif char_count < SCANNED_THRESHOLD:
-            page_type = PageType.SCANNED
-            scanned_count += 1
-        else:
-            page_type = PageType.TEXT_RICH
-            text_rich_count += 1
+    words = text_lower.split()
+    # Build 1-gram, 2-gram, and 3-gram windows to cover multi-word keywords
+    for window_size in (1, 2, 3):
+        for i in range(len(words) - window_size + 1):
+            window = " ".join(words[i : i + window_size])
+            for kw in _KEYWORDS_LOWER:
+                if fuzz.ratio(window, kw) >= _FUZZY_THRESHOLD:
+                    return True
 
-        # --- keyword check (case-insensitive) ---
-        text_lower = text.lower()
-        has_keywords = any(kw in text_lower for kw in FINANCIAL_KEYWORDS)
+    return False
 
-        # --- decide whether to send to OCR ---
-        # Scanned pages with financial keywords (or adjacent to them) go to OCR.
-        send_to_ocr = page_type == PageType.SCANNED and has_keywords
 
-        pages.append(
-            PageClassification(
-                page_number=page_num + 1,   # 1-indexed for human readability
-                page_type=page_type,
-                text_char_count=char_count,
-                has_financial_keywords=has_keywords,
-                send_to_ocr=send_to_ocr,
+# ---------------------------------------------------------------------------
+# Core classifier
+# ---------------------------------------------------------------------------
+
+async def classify_pages(
+    pdf_path: str,
+    doc_type: str,
+) -> PageClassificationResult:
+    """
+    Classify every page of a PDF and decide which pages need OCR.
+
+    This is the entry point for the V6 smart page targeting pipeline.
+    It opens the PDF with PyMuPDF, extracts text from every page at
+    near-zero cost, classifies pages by text density, applies a keyword
+    heuristic (with fuzzy matching) to select OCR targets, and returns
+    all digital text so downstream modules can skip OCR for those pages.
+
+    Args:
+        pdf_path: Absolute path to the PDF file.
+        doc_type: One of the ``DocType`` enum values as a string
+                  (``"annual_report"``, ``"bank_statement"``, etc.).
+
+    Returns:
+        ``PageClassificationResult`` containing:
+          - ``digital_pages``: 0-indexed page numbers with sufficient text
+          - ``ocr_priority_pages``: pages to send to DeepSeek-OCR
+          - ``ocr_skip_pages``: scanned but not financially relevant
+          - ``digital_text``: ``{page_num: extracted_text}`` for DIGITAL pages
+          - ``encrypted``: True if the PDF could not be opened
+
+    Raises:
+        No exceptions are raised.  Encrypted PDFs return a result with
+        ``encrypted=True`` and an ``encryption_error`` message.
+    """
+
+    # --- Handle encrypted PDFs gracefully ---
+    try:
+        doc = fitz.open(pdf_path)
+        if doc.is_encrypted:
+            doc.close()
+            logger.warning(f"PDF is encrypted: {pdf_path}")
+            return PageClassificationResult(
+                total_pages=0,
+                encrypted=True,
+                encryption_error="PDF is encrypted and cannot be processed without a password.",
             )
+    except Exception as exc:
+        logger.error(f"Failed to open PDF {pdf_path}: {exc}")
+        return PageClassificationResult(
+            total_pages=0,
+            encrypted=True,
+            encryption_error=str(exc),
         )
+
+    total = len(doc)
+    logger.info(f"Classifying {total} pages from {pdf_path} (doc_type={doc_type})")
+
+    # --- Phase 1: extract text and classify each page ---
+    page_texts: List[str] = []
+    page_types: List[PageType] = []
+    keyword_flags: List[bool] = []
+
+    for page_num in range(total):
+        raw_text = doc[page_num].get_text("text") or ""
+        text = raw_text.strip()
+        char_count = len(text)
+        page_texts.append(text)
+
+        # Classify by character count
+        if char_count == 0:
+            page_types.append(PageType.BLANK)
+        elif char_count < _SCANNED_THRESHOLD:
+            page_types.append(PageType.SCANNED)
+        elif char_count <= _DIGITAL_THRESHOLD:
+            page_types.append(PageType.PARTIAL)
+        else:
+            page_types.append(PageType.DIGITAL)
+
+        # Check for financial keywords (exact + fuzzy)
+        keyword_flags.append(_has_financial_keywords(text))
 
     doc.close()
 
-    # Second pass: also send scanned pages that are *adjacent* to a keyword page
-    # (financial tables often span across consecutive scanned pages).
-    keyword_page_indices = {
-        i for i, p in enumerate(pages) if p.has_financial_keywords
-    }
-    for i, p in enumerate(pages):
-        if (
-            p.page_type == PageType.SCANNED
-            and not p.send_to_ocr
-            and (i - 1 in keyword_page_indices or i + 1 in keyword_page_indices)
-        ):
-            pages[i] = p.model_copy(update={"send_to_ocr": True})
+    # --- Phase 2: OCR decision per page ---
+    pages: List[PageClassification] = []
+    digital_pages: List[int] = []
+    ocr_priority: List[int] = []
+    ocr_skip: List[int] = []
+    digital_text: Dict[int, str] = {}
 
-    ocr_targets = [p.page_number for p in pages if p.send_to_ocr]
+    for i in range(total):
+        p_type = page_types[i]
+        has_kw = keyword_flags[i]
+
+        # Check neighbors for keywords
+        prev_kw = keyword_flags[i - 1] if i > 0 else False
+        next_kw = keyword_flags[i + 1] if i < total - 1 else False
+        neighbor_kw = prev_kw or next_kw
+
+        # Default: no OCR needed
+        ocr_decision = OCRDecision.NOT_APPLICABLE
+
+        if p_type == PageType.DIGITAL:
+            # Text is good — store it, no OCR
+            digital_pages.append(i)
+            digital_text[i] = page_texts[i]
+
+        elif p_type in (PageType.SCANNED, PageType.PARTIAL):
+            # --- Doc-type overrides ---
+            if doc_type == DocType.BANK_STATEMENT or doc_type == "bank_statement":
+                # Bank statements are digital CSVs; skip OCR entirely
+                ocr_decision = OCRDecision.OCR_SKIP
+                ocr_skip.append(i)
+            elif doc_type == DocType.GST_FILING or doc_type == "gst_filing":
+                # GST filings: every scanned page is important
+                ocr_decision = OCRDecision.OCR_PRIORITY
+                ocr_priority.append(i)
+            else:
+                # Standard keyword + neighbor heuristic
+                if has_kw or neighbor_kw:
+                    ocr_decision = OCRDecision.OCR_PRIORITY
+                    ocr_priority.append(i)
+                else:
+                    ocr_decision = OCRDecision.OCR_SKIP
+                    ocr_skip.append(i)
+
+        # BLANK pages get NOT_APPLICABLE — nothing to do
+
+        pages.append(
+            PageClassification(
+                page_number=i,
+                page_type=p_type,
+                ocr_decision=ocr_decision,
+                text_char_count=len(page_texts[i]),
+                has_financial_keywords=has_kw,
+                neighbor_has_keywords=neighbor_kw,
+            )
+        )
 
     result = PageClassificationResult(
-        total_pages=len(pages),
-        text_rich_pages=text_rich_count,
-        scanned_pages=scanned_count,
-        blank_pages=blank_count,
-        ocr_target_pages=ocr_targets,
+        total_pages=total,
+        digital_pages=digital_pages,
+        ocr_priority_pages=ocr_priority,
+        ocr_skip_pages=ocr_skip,
+        estimated_ocr_pages=len(ocr_priority),
+        digital_text=digital_text,
         pages=pages,
     )
 
     logger.info(
-        f"Page classification complete: {result.total_pages} pages — "
-        f"{text_rich_count} text-rich, {scanned_count} scanned, "
-        f"{blank_count} blank, {len(ocr_targets)} targeted for OCR"
+        f"Classification complete: {total} pages — "
+        f"{len(digital_pages)} digital, "
+        f"{len(ocr_priority)} OCR priority, "
+        f"{len(ocr_skip)} OCR skip, "
+        f"{total - len(digital_pages) - len(ocr_priority) - len(ocr_skip)} blank"
     )
 
     return result

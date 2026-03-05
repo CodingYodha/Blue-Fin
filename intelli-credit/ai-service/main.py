@@ -83,13 +83,19 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
 
         # 1. Classify pages
         logger.info(f"[{job_id}] Step 1/4 — Classifying pages: {file_path}")
-        classification = await classify_pages(file_path)
+        classification = await classify_pages(file_path, doc_type)
+
+        # Bail early if encrypted
+        if classification.encrypted:
+            raise RuntimeError(
+                f"Encrypted PDF: {classification.encryption_error}"
+            )
 
         # 2. OCR scanned pages targeted by the classifier
         logger.info(
-            f"[{job_id}] Step 2/4 — OCR on {len(classification.ocr_target_pages)} pages"
+            f"[{job_id}] Step 2/4 — OCR on {classification.estimated_ocr_pages} pages"
         )
-        ocr_result = await run_ocr(file_path, classification.ocr_target_pages)
+        ocr_result = await run_ocr(file_path, classification.ocr_priority_pages)
 
         # 3. Combine text: text-rich pages (PyMuPDF direct) + OCR Markdown
         logger.info(f"[{job_id}] Step 3/4 — Combining text")
@@ -135,32 +141,29 @@ async def _process_document(job_id: str, file_path: str, doc_type: DocType):
 def _combine_page_text(file_path, classification, ocr_result) -> str:
     """
     Merge text from two sources:
-      - Text-rich pages: extracted directly by PyMuPDF (fast, free)
+      - DIGITAL pages: text already extracted by page_classifier (digital_text dict)
       - OCR pages: Markdown returned by DeepSeek
 
+    No need to re-open the PDF — digital_text was captured during classification.
     Returns a single combined string for Claude extraction.
     """
-    import fitz as _fitz
-
-    doc = _fitz.open(file_path)
     parts: list[str] = []
 
-    # Build a lookup for OCR results by page number
+    # Build a lookup for OCR results by page number (0-indexed)
     ocr_lookup = {r.page_number: r.markdown_text for r in ocr_result.results}
 
     for page_info in classification.pages:
-        pn = page_info.page_number
+        pn = page_info.page_number  # 0-indexed
 
         if pn in ocr_lookup and ocr_lookup[pn]:
             # Use OCR output for scanned pages
             parts.append(f"--- Page {pn} (OCR) ---\n{ocr_lookup[pn]}")
-        elif page_info.page_type.value == "text_rich":
-            # Use PyMuPDF direct extraction
-            text = doc[pn - 1].get_text("text") or ""
+        elif pn in classification.digital_text:
+            # Use pre-extracted digital text (no PDF re-open needed)
+            text = classification.digital_text[pn]
             if text.strip():
                 parts.append(f"--- Page {pn} ---\n{text.strip()}")
 
-    doc.close()
     return "\n\n".join(parts)
 
 
