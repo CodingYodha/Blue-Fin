@@ -1,0 +1,114 @@
+{
+  "Manufacturing_General": {
+    "dscr_good": 1.4,
+    "dscr_ok": 1.25,
+    "de_max": 3.0,
+    "ebitda_floor": 0.1,
+    "gst_var_normal": 0.12
+  },
+  "Textiles_Cotton": {
+    "dscr_good": 1.3,
+    "dscr_ok": 1.2,
+    "de_max": 2.5,
+    "ebitda_floor": 0.09,
+    "gst_var_normal": 0.15
+  },
+  "Steel_Secondary": {
+    "dscr_good": 1.3,
+    "dscr_ok": 1.15,
+    "de_max": 2.5,
+    "ebitda_floor": 0.04,
+    "gst_var_normal": 0.15
+  },
+  "Steel_Primary": {
+    "dscr_good": 1.4,
+    "dscr_ok": 1.25,
+    "de_max": 3.0,
+    "ebitda_floor": 0.12,
+    "gst_var_normal": 0.12
+  },
+  "Cement": {
+    "dscr_good": 1.45,
+    "dscr_ok": 1.3,
+    "de_max": 2.5,
+    "ebitda_floor": 0.12,
+    "gst_var_normal": 0.1
+  },
+  "IT_Services": {
+    "dscr_good": 1.8,
+    "dscr_ok": 1.5,
+    "de_max": 1.5,
+    "ebitda_floor": 0.18,
+    "gst_var_normal": 0.05
+  },
+  "Pharma": {
+    "dscr_good": 1.6,
+    "dscr_ok": 1.35,
+    "de_max": 2.0,
+    "ebitda_floor": 0.14,
+    "gst_var_normal": 0.08
+  },
+  "NBFC": {
+    "dscr_good": 1.5,
+    "dscr_ok": 1.35,
+    "de_max": 6.0,
+    "ebitda_floor": 0.18,
+    "gst_var_normal": 0.05
+  },
+  "Real_Estate_Residential": {
+    "dscr_good": 1.2,
+    "dscr_ok": 1.1,
+    "de_max": 4.0,
+    "ebitda_floor": 0.14,
+    "gst_var_normal": 0.2
+  },
+  "Real_Estate_Commercial": {
+    "dscr_good": 1.9,
+    "dscr_ok": 1.6,
+    "de_max": 4.0,
+    "ebitda_floor": 0.22,
+    "gst_var_normal": 0.12
+  },
+  "Infrastructure_Roads": {
+    "dscr_good": 1.6,
+    "dscr_ok": 1.4,
+    "de_max": 5.0,
+    "ebitda_floor": 0.3,
+    "gst_var_normal": 0.08
+  },
+  "Hospitals_Healthcare": {
+    "dscr_good": 1.7,
+    "dscr_ok": 1.4,
+    "de_max": 2.5,
+    "ebitda_floor": 0.18,
+    "gst_var_normal": 0.08
+  },
+  "FMCG_Distribution": {
+    "dscr_good": 1.4,
+    "dscr_ok": 1.2,
+    "de_max": 2.0,
+    "ebitda_floor": 0.06,
+    "gst_var_normal": 0.1
+  },
+  "Chemical": {
+    "dscr_good": 1.35,
+    "dscr_ok": 1.2,
+    "de_max": 2.5,
+    "ebitda_floor": 0.11,
+    "gst_var_normal": 0.12
+  },
+  "Agri_Food": {
+    "dscr_good": 1.3,
+    "dscr_ok": 1.15,
+    "de_max": 2.5,
+    "ebitda_floor": 0.07,
+    "gst_var_normal": 0.2
+  },
+  "DEFAULT": {
+    "dscr_good": 1.35,
+    "dscr_ok": 1.2,
+    "de_max": 3.0,
+    "ebitda_floor": 0.1,
+    "gst_var_normal": 0.12
+  }
+}
