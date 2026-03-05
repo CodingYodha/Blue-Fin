@@ -23,9 +23,17 @@ class DocType(str, Enum):
 
 class PageType(str, Enum):
     """Classification result for individual PDF pages."""
-    TEXT_RICH = "text_rich"       # Born-digital, PyMuPDF can handle
-    SCANNED = "scanned"          # Needs OCR (DeepSeek)
-    BLANK = "blank"              # Skip entirely
+    DIGITAL = "digital"          # Born-digital, >200 chars — PyMuPDF handles directly
+    SCANNED = "scanned"          # <50 chars — full OCR candidate
+    PARTIAL = "partial"          # 50-200 chars — lower-priority OCR candidate
+    BLANK = "blank"              # 0 chars — skip entirely
+
+
+class OCRDecision(str, Enum):
+    """Whether a scanned/partial page should be sent to DeepSeek-OCR."""
+    OCR_PRIORITY = "ocr_priority"    # Financially relevant → send to OCR
+    OCR_SKIP = "ocr_skip"           # Scanned but not financially relevant
+    NOT_APPLICABLE = "n/a"          # Digital or blank — no OCR needed
 
 
 class ProcessingStatus(str, Enum):
@@ -66,33 +74,58 @@ class JobStatusResponse(BaseModel):
 # =============================================================================
 
 class PageClassification(BaseModel):
-    """Result of classifying a single PDF page."""
-    page_number: int
+    """Classification detail for a single PDF page."""
+    page_number: int = Field(..., description="0-indexed page number")
     page_type: PageType
+    ocr_decision: OCRDecision = OCRDecision.NOT_APPLICABLE
     text_char_count: int = Field(
         ..., description="Number of characters extracted by PyMuPDF"
     )
     has_financial_keywords: bool = Field(
         default=False,
-        description="True if page contains keywords like 'Balance Sheet', 'GSTR', etc."
+        description="True if financial keywords found on this page (exact or fuzzy)"
     )
-    send_to_ocr: bool = Field(
+    neighbor_has_keywords: bool = Field(
         default=False,
-        description="True if this page should be sent to DeepSeek-OCR"
+        description="True if the page before or after has financial keywords"
     )
 
 
 class PageClassificationResult(BaseModel):
-    """Aggregate classification for an entire PDF."""
+    """
+    Aggregate classification for an entire PDF.
+    Returned by classify_pages() to downstream pipeline stages.
+    """
     total_pages: int
-    text_rich_pages: int
-    scanned_pages: int
-    blank_pages: int
-    ocr_target_pages: List[int] = Field(
+    digital_pages: List[int] = Field(
         default_factory=list,
-        description="Page numbers selected for OCR (scanned + financial keyword)"
+        description="0-indexed page numbers classified as DIGITAL"
     )
-    pages: List[PageClassification]
+    ocr_priority_pages: List[int] = Field(
+        default_factory=list,
+        description="0-indexed page numbers to send to DeepSeek-OCR"
+    )
+    ocr_skip_pages: List[int] = Field(
+        default_factory=list,
+        description="0-indexed scanned pages not financially relevant (skipped)"
+    )
+    estimated_ocr_pages: int = Field(
+        default=0,
+        description="Count of ocr_priority_pages"
+    )
+    digital_text: Dict[int, str] = Field(
+        default_factory=dict,
+        description="Extracted text for DIGITAL pages {page_num: text}, bypasses OCR"
+    )
+    encrypted: bool = Field(
+        default=False,
+        description="True if the PDF is encrypted and could not be opened"
+    )
+    encryption_error: Optional[str] = Field(
+        default=None,
+        description="Error message if encryption prevented processing"
+    )
+    pages: List[PageClassification] = Field(default_factory=list)
 
 
 # =============================================================================
