@@ -36,6 +36,9 @@ from rag import (
 )
 from rag.qdrant_client import close_client as close_qdrant
 from rag.routes import router as rag_router
+from agents.routes import router as research_agent_router
+from ml_core.model_loader import load_artifacts
+from ml_core.routes import router as scoring_router
 
 load_dotenv()
 
@@ -74,6 +77,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Qdrant startup failed (will retry on first request): {e}")
 
+    try:
+        logger.info("Loading ML Core artifacts...")
+        load_artifacts()
+    except Exception as e:
+        logger.warning(f"ML Artifact loading failed: {e}")
+
     yield
 
     # Shutdown
@@ -105,6 +114,12 @@ app.include_router(entity_graph_router)
 
 # Include RAG router
 app.include_router(rag_router)
+
+# Include Research Agent router
+app.include_router(research_agent_router)
+
+# Include Scoring router
+app.include_router(scoring_router)
 
 # Shared volume base path (Docker mount)
 BASE_PATH = Path("/tmp/intelli-credit")

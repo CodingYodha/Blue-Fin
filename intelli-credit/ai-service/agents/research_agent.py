@@ -15,6 +15,8 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
 from model_config import CLAUDE_RESEARCH_AGENT_MODEL
+import search_backends
+from thefuzz import fuzz
 
 load_dotenv()
 
@@ -59,6 +61,7 @@ class ResearchRequest(BaseModel):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str] = None
 
 class ResearchResponse(BaseModel):
     job_id: str
@@ -80,11 +83,30 @@ class ResearchState(TypedDict):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str]
     search_results: Dict[str, List[Any]] # Any because we'll convert SearchResult to dict
     escalation_triggered: bool
-    escalation_results: Dict[str, List[Any]]
+    triggered_keywords: List[str]
+    escalation_results: List[Any]
+    deep_search_backend: str
+    escalation_query_count: int
+    verified_findings: List[Dict[str, Any]]
+    rejected_findings: List[Dict[str, Any]]
+    entity_verification_ran: bool
+    sector_sentiment_score: float
+    sector_sentiment_label: str
+    sector_sentiment_articles_scored: int
+    sector_sentiment_key_signals: List[str]
+    sector_sentiment_override: bool
+    sector_sentiment_source: str
     risk_signals: List[str]
     classification: Dict[str, Any] # Store the parsed JSON output from Claude
+
+class VerifiedFinding(BaseModel):
+    result: Dict[str, Any]
+    match: Optional[bool]
+    confidence: str
+    reason: str
 
 class SearchResult(BaseModel):
     title: str
@@ -213,56 +235,372 @@ async def check_escalation(state: ResearchState) -> ResearchState:
     keywords = ["fraud", "NCLT", "NPA", "default", "arrested", "ED", "CBI", "Enforcement Directorate", "money laundering"]
     keywords_lower = [k.lower() for k in keywords]
     
-    triggered = False
+    triggered_keywords = []
     
     # Scan all base search results for keywords
     for category, results_list in state["search_results"].items():
         for result in results_list:
             text_to_check = f"{result['title']} {result['content']}".lower()
-            if any(keyword in text_to_check for keyword in keywords_lower):
-                logger.warning(f"Escalation triggered by keyword match in {category}: {result['title']}")
-                triggered = True
-                break
-        if triggered:
-            break
-            
-    return {"escalation_triggered": triggered}
+            for keyword in keywords_lower:
+                if keyword in text_to_check and keyword not in triggered_keywords:
+                    logger.warning(f"Escalation triggered by keyword match in {category}: {result['title']}")
+                    triggered_keywords.append(keyword)
+                    
+    return {
+        "escalation_triggered": len(triggered_keywords) > 0,
+        "triggered_keywords": triggered_keywords
+    }
 
 def should_escalate(state: ResearchState) -> str:
     if state.get("escalation_triggered", False):
         return "run_escalation_searches"
-    return "extract_risk_signals"
+    return "verify_entity_match"
 
 async def run_escalation_searches(state: ResearchState) -> ResearchState:
     logger.info("Node: run_escalation_searches")
-    tool = TavilySearchTool()
-    
-    primary_promoter = state["promoter_names"][0] if state["promoter_names"] else "Unknown Promoter"
     company_name = state["company_name"]
+    promoter_names = state["promoter_names"]
+    triggered_keywords = state.get("triggered_keywords", [])
     
-    def sanitize(text: str) -> str:
-        return re.sub(r'[^a-zA-Z0-9\s]', '', text).strip()
+    queries = search_backends.build_escalation_queries(company_name, promoter_names, triggered_keywords)
+    
+    all_results = []
+    final_backend = ""
+    query_count = len(queries)
+    
+    for query in queries:
+        result = await search_backends.deep_search(query, num_results=5)
+        final_backend = result.backend
+        all_results.extend([r.model_dump() for r in result.results])
+        if "duckduckgo" in final_backend:
+            await asyncio.sleep(1)
+            
+    logger.info(f"Deep search complete: {query_count} queries via {final_backend}. Found {len(all_results)} results.")
         
-    s_company = sanitize(company_name)
-    s_promoter = sanitize(primary_promoter)
-    
-    queries = {
-        "nclt_cases": f"{s_promoter} NCLT case number status site:nclt.gov.in OR site:ecourts.gov.in",
-        "ed_attachments": f"{s_company} enforcement directorate ED attachment"
+    return {
+        "escalation_results": all_results,
+        "deep_search_backend": final_backend,
+        "escalation_query_count": query_count
     }
-    
-    tasks = [
-        tool.search_with_retry(query, retries=2, max_results=3) 
-        for query in queries.values()
+
+async def verify_entity_match(state: ResearchState) -> ResearchState:
+    logger.info("Node: verify_entity_match")
+    company_name = state["company_name"]
+    promoter_names = state["promoter_names"]
+    cin = state.get("cin")
+
+    all_results = []
+    for category, results_list in state.get("search_results", {}).items():
+        all_results.extend(results_list)
+    all_results.extend(state.get("escalation_results", []))
+
+    LEGAL_KEYWORDS = [
+        # Insolvency & Courts
+        "NCLT", "NCLAT", "IBC", "insolvency", "liquidation", "resolution professional",
+        "corporate insolvency resolution process", "CIRP", "moratorium", "RP appointed",
+        "winding up", "DRT", "DRAT", "debt recovery tribunal", "SARFAESI",
+        "possession notice", "auction notice", "symbolic possession",
+
+        # Law Enforcement
+        "ED", "Enforcement Directorate", "FEMA", "PMLA", "money laundering",
+        "attachment order", "provisional attachment", "CBI", "FIR", "chargesheet",
+        "arrested", "custody", "bail", "conviction", "lookout notice", "LOC issued",
+        "SFIO", "Serious Fraud Investigation Office", "EOW", "Economic Offences Wing",
+
+        # Tax & Regulatory
+        "income tax raid", "IT raid", "tax evasion", "GST evasion", "GST fraud",
+        "fake invoice", "ITC fraud", "benami", "Benami Transactions",
+        "GSTN suspended", "GST registration cancelled",
+
+        # Capital Markets
+        "SEBI", "debarred", "debarment", "insider trading", "market manipulation",
+        "consent order", "SEBI penalty", "NSE action", "BSE action",
+
+        # Banking & Credit
+        "NPA", "non-performing asset", "wilful defaulter", "wilful default",
+        "RBI penalty", "RBI action", "prompt corrective action", "PCA",
+        "loan restructuring", "one time settlement", "OTS", "debt restructuring",
+        "account fraud", "SMA", "special mention account",
+
+        # General Fraud
+        "fraud", "cheating", "forgery", "misappropriation", "embezzlement",
+        "diversion of funds", "siphoning", "shell company", "hawala",
+        "round tripping", "circular trading",
+
+        # MCA / Corporate
+        "director disqualified", "DIN deactivated", "strike off", "struck off",
+        "MCA notice", "ROC notice", "compounding", "Section 138",    # cheque bounce
+        "Section 420",     # IPC cheating
+        "Section 406",     # criminal breach of trust
     ]
-    
-    results_list = await asyncio.gather(*tasks)
-    
-    dict_results = {}
-    for key, r_list in zip(queries.keys(), results_list):
-        dict_results[key] = [r.model_dump() for r in r_list]
+
+    def is_legal_result(text: str, keywords: list, threshold: int = 80) -> bool:
+        text_lower = text.lower()
+        words = text_lower.split()
+        for kw in keywords:
+            kw_lower = kw.lower()
+            # Exact substring check first (fast path)
+            if kw_lower in text_lower:
+                return True
+            # Fuzzy check against individual words and bigrams (catches misspellings)
+            for i, word in enumerate(words):
+                if fuzz.ratio(kw_lower, word) >= threshold:
+                    return True
+                # Check bigrams (e.g. "Enforcement Directorate" as two words)
+                if i < len(words) - 1:
+                    bigram = f"{word} {words[i+1]}"
+                    if fuzz.ratio(kw_lower, bigram) >= threshold:
+                        return True
+        return False
+
+    legal_results = [
+        r for r in all_results
+        if is_legal_result(r.get("title", "") + " " + r.get("snippet", r.get("content", "")), LEGAL_KEYWORDS, threshold=80)
+    ]
+
+    if not legal_results:
+        return {
+            "verified_findings": [], 
+            "rejected_findings": [], 
+            "entity_verification_ran": True
+        }
+
+    verified = []
+    rejected = []
+    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    for result in legal_results:
+        title = result.get("title", "")
+        url = result.get("url", "")
+        snippet = result.get("snippet", result.get("content", ""))
         
-    return {"escalation_results": dict_results}
+        verification_prompt = f"""You are an Entity Resolution AI for Indian corporate credit assessment.
+
+A web search returned the following legal finding. Determine if it refers to the SAME
+company/person as the loan applicant, or a different entity with a similar name.
+
+LOAN APPLICANT:
+- Company Name: {company_name}
+- Promoter Names: {', '.join(promoter_names)}
+- CIN: {cin or 'Not available'}
+
+SEARCH RESULT:
+Title: {title}
+URL: {url}
+Snippet: {snippet}
+
+VERIFICATION TASK:
+Does this search result refer to the SAME company or promoter as the loan applicant?
+
+Rules:
+- If the result mentions BOTH a matching promoter name AND the company name → MATCH: TRUE
+- If the result mentions ONLY the name but a DIFFERENT company → MATCH: FALSE
+- If the result mentions the CIN or DIN and it matches → MATCH: TRUE (strong signal)
+- If uncertain (insufficient context) → MATCH: UNCERTAIN
+
+Return ONLY this JSON, nothing else:
+{{"match": true/false/null, "confidence": "HIGH"/"MEDIUM"/"LOW", "reason": "one sentence explanation"}}"""
+
+        try:
+            response = await client.messages.create(
+                model=CLAUDE_RESEARCH_AGENT_MODEL,
+                max_tokens=200,
+                messages=[{"role": "user", "content": verification_prompt}]
+            )
+            raw_output = response.content[0].text
+            
+            try:
+                if "```json" in raw_output:
+                    json_str = raw_output.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_output:
+                    json_str = raw_output.split("```")[1].split("```")[0].strip()
+                else:
+                    json_str = raw_output.strip()
+                parsed = json.loads(json_str)
+            except json.JSONDecodeError:
+                parsed = {}
+            
+            match = parsed.get("match")
+            confidence = parsed.get("confidence", "LOW")
+            reason = parsed.get("reason", "Verification parse error" if not parsed else "")
+
+            finding_dict = {
+                "result": result,
+                "match": match,
+                "confidence": confidence,
+                "reason": reason
+            }
+
+            if match is True:
+                verified.append(finding_dict)
+            elif match is False:
+                rejected.append(finding_dict)
+            else: 
+                finding_dict["confidence"] = "LOW"
+                verified.append(finding_dict)
+        except Exception as e:
+            logger.error(f"Entity verification API error: {e}")
+            verified.append({
+                "result": result,
+                "match": None,
+                "confidence": "LOW",
+                "reason": f"API error: {str(e)}"
+            })
+
+    logger.info(
+        f"Entity verification: {len(verified)} verified, "
+        f"{len(rejected)} rejected (name collision), "
+        f"{len([v for v in verified if v.get('confidence') == 'LOW'])} uncertain"
+    )
+    
+    return {
+        "verified_findings": verified,
+        "rejected_findings": rejected,
+        "entity_verification_ran": True
+    }
+
+async def score_sector_sentiment(state: ResearchState) -> ResearchState:
+    logger.info("Node: score_sector_sentiment")
+    
+    # Collect sector/news-related search results from base searches
+    # Filter for results relevant to sector outlook, macro conditions, regulatory news
+    all_results = []
+    for category, results_list in state.get("search_results", {}).items():
+        all_results.extend(results_list)
+
+    news_texts = [
+        f"Title: {r.get('title', '')}\nSnippet: {r.get('snippet', r.get('content', ''))}\nURL: {r.get('url', '')}"
+        for r in all_results
+        if r.get('snippet', r.get('content', ''))
+    ]
+
+    if not news_texts:
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "default_neutral_no_results"
+        }
+
+    articles_text = "\n\n---\n\n".join(news_texts)
+
+    sentiment_prompt = f"""You are a financial sector sentiment analyst specialising in Indian corporate credit.
+
+Score the regulatory and macroeconomic sentiment for the following company's sector
+based on the search results below.
+
+COMPANY: {state['company_name']}
+INDUSTRY: {state.get('industry', 'Unknown')}
+
+SEARCH RESULTS:
+{articles_text}
+
+SCORING INSTRUCTIONS:
+1. Score each article individually on a scale of -1.0 to +1.0
+2. Return the weighted average as the final score
+3. Weight articles about the specific company more heavily than general sector news
+
+MANDATORY INDIAN REGULATORY SEVERITY MAPPINGS — these override sentiment analysis:
+The following events MUST result in a score of -1.0 regardless of context:
+- Enforcement Directorate (ED) investigation or raid
+- CBI FIR filed against company or promoter
+- NCLT petition admitted (company under insolvency)
+- SARFAESI action by a bank
+- RBI show-cause notice or penalty order
+- SEBI debarment order against promoter
+- GST department prosecution or arrest
+
+POSITIVE SIGNALS (score toward +1.0):
+- Government PLI scheme inclusion
+- Export order wins
+- Rating upgrade by CRISIL/ICRA/CARE
+- RBI approval for new business line
+- Strong sectoral tailwinds (policy support, demand growth)
+
+Return ONLY this JSON, nothing else:
+{{
+  "individual_scores": [
+    {{"title": "article title", "score": 0.0, "reason": "one sentence"}}
+  ],
+  "weighted_average": 0.0,
+  "sentiment_label": "HEADWIND" or "NEUTRAL" or "TAILWIND",
+  "key_signals_found": ["list of specific signals detected"],
+  "mandatory_override_triggered": false,
+  "override_reason": null
+}}
+
+Sentiment label mapping:
+- weighted_average < -0.3 → HEADWIND
+- -0.3 to +0.3 → NEUTRAL
+- > +0.3 → TAILWIND"""
+
+    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    if not client.api_key:
+        logger.warning("ANTHROPIC_API_KEY missing. Returning fallback sentiment.")
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "fallback_no_api_key"
+        }
+
+    try:
+        response = await client.messages.create(
+            model=CLAUDE_RESEARCH_AGENT_MODEL,
+            max_tokens=600,
+            messages=[{"role": "user", "content": sentiment_prompt}]
+        )
+        raw_output = response.content[0].text
+        
+        try:
+            if "```json" in raw_output:
+                json_str = raw_output.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_output:
+                json_str = raw_output.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = raw_output.strip()
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError:
+            raise ValueError(f"Failed to parse Claude JSON output: {raw_output}")
+            
+        score = float(parsed.get("weighted_average", 0.0))
+        # Clamp to [-1.0, +1.0]
+        score = max(-1.0, min(1.0, score))
+        label = parsed.get("sentiment_label", "NEUTRAL")
+
+        articles_scored = len(parsed.get("individual_scores", []))
+        key_signals = parsed.get("key_signals_found", [])
+        override = parsed.get("mandatory_override_triggered", False)
+
+        logger.info(
+            f"Sector sentiment scored: {score:.2f} ({label}) "
+            f"from {articles_scored} articles. "
+            f"Override triggered: {override}"
+        )
+
+        return {
+            "sector_sentiment_score": score,
+            "sector_sentiment_label": label,
+            "sector_sentiment_articles_scored": articles_scored,
+            "sector_sentiment_key_signals": key_signals,
+            "sector_sentiment_override": override,
+            "sector_sentiment_source": "claude_indian_regulatory_mapping"
+        }
+
+    except Exception as e:
+        logger.warning(f"Sentiment scoring error: {e}. Defaulting to 0.0 NEUTRAL.")
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "default_neutral_error"
+        }
 
 async def extract_risk_signals(state: ResearchState) -> ResearchState:
     logger.info("Node: extract_risk_signals")
@@ -270,11 +608,12 @@ async def extract_risk_signals(state: ResearchState) -> ResearchState:
     signals = []
     if state.get("escalation_triggered", False):
         signals.append("Automated escalation was triggered due to negative keywords found in base search.")
-        if "escalation_results" in state:
-            for cat, results in state["escalation_results"].items():
-                if results:
-                    signals.append(f"Found deep records in {cat}.")
+        if state.get("escalation_results"):
+            signals.append(f"Found {len(state['escalation_results'])} deep records from escalating searches.")
             
+    if state.get("rejected_findings"):
+        signals.append(f"Entity verification rejected {len(state['rejected_findings'])} findings as name collisions.")
+        
     if not signals:
         signals.append("No immediate red flags detected.")
         
@@ -289,17 +628,13 @@ async def classify_risks(state: ResearchState) -> ResearchState:
         return {"classification": {"error": "API key missing"}}
         
     # Combine all search text
-    combined_text = ""
-    for category, results in state.get("search_results", {}).items():
-        combined_text += f"\n--- {category.upper()} ---\n"
-        for r in results:
-            combined_text += f"Title: {r['title']}\nContent: {r['content']}\n"
-            
-    if "escalation_results" in state:
-        for category, results in state["escalation_results"].items():
-            combined_text += f"\n--- ESCALATION: {category.upper()} ---\n"
-            for r in results:
-                 combined_text += f"Title: {r['title']}\nContent: {r['content']}\n"
+    combined_text = "IMPORTANT: The following findings have been entity-verified — they are confirmed to refer to this specific company/promoter. Unverified name collision results have been excluded.\n\n"
+    for r_dict in state.get("verified_findings", []):
+        r = r_dict.get("result", {})
+        combined_text += f"Title: {r.get('title', '')}\nContent: {r.get('snippet', r.get('content', ''))}\n\n"
+        
+    rejected_count = len(state.get("rejected_findings", []))
+    combined_text += f"Note: {rejected_count} search results were excluded as name collision false positives (different entities with similar names).\n"
                  
     # Truncate to avoid massive token usage during testing
     combined_text = combined_text[:3000]
@@ -310,6 +645,10 @@ async def classify_risks(state: ResearchState) -> ResearchState:
 Company: {state['company_name']}
 Promoters: {', '.join(state['promoter_names'])}
 
+Sector Sentiment Score (Claude-scored, Indian regulatory mappings): {state.get('sector_sentiment_score', 0.0):.2f} ({state.get('sector_sentiment_label', 'NEUTRAL')})
+Key signals detected: {state.get('sector_sentiment_key_signals', [])}
+Mandatory override triggered: {state.get('sector_sentiment_override', False)}
+
 Respond ONLY with this JSON:
 {{
   "promoter_risk": "LOW" | "MEDIUM" | "HIGH",
@@ -319,7 +658,8 @@ Respond ONLY with this JSON:
   "sector_risk": "TAILWIND" | "NEUTRAL" | "HEADWIND",
   "sector_reason": "one line",
   "key_findings": ["finding 1", "finding 2"],
-  "sources": ["url1", "url2"]
+  "sources": ["url1", "url2"],
+  "sector_sentiment_score": {state.get('sector_sentiment_score', 0.0)}
 }}"""
 
     try:
@@ -377,9 +717,22 @@ class ResearchState(TypedDict):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str]
     search_results: Dict[str, List[Any]]
     escalation_triggered: bool
-    escalation_results: Dict[str, List[Any]]
+    triggered_keywords: List[str]
+    escalation_results: List[Any]
+    deep_search_backend: str
+    escalation_query_count: int
+    verified_findings: List[Dict[str, Any]]
+    rejected_findings: List[Dict[str, Any]]
+    entity_verification_ran: bool
+    sector_sentiment_score: float
+    sector_sentiment_label: str
+    sector_sentiment_articles_scored: int
+    sector_sentiment_key_signals: List[str]
+    sector_sentiment_override: bool
+    sector_sentiment_source: str
     risk_signals: List[str]
     classification: Dict[str, Any]
 
@@ -387,13 +740,17 @@ class ResearchState(TypedDict):
 workflow.add_node("run_base_searches", make_tracked_node("run_base_searches", run_base_searches))
 workflow.add_node("check_escalation", make_tracked_node("check_escalation", check_escalation))
 workflow.add_node("run_escalation_searches", make_tracked_node("run_escalation_searches", run_escalation_searches))
+workflow.add_node("verify_entity_match", make_tracked_node("verify_entity_match", verify_entity_match))
+workflow.add_node("score_sector_sentiment", make_tracked_node("score_sector_sentiment", score_sector_sentiment))
 workflow.add_node("extract_risk_signals", make_tracked_node("extract_risk_signals", extract_risk_signals))
 workflow.add_node("classify_risks", make_tracked_node("classify_risks", classify_risks))
 
 workflow.set_entry_point("run_base_searches")
 workflow.add_edge("run_base_searches", "check_escalation")
 workflow.add_conditional_edges("check_escalation", should_escalate)
-workflow.add_edge("run_escalation_searches", "extract_risk_signals")
+workflow.add_edge("run_escalation_searches", "verify_entity_match")
+workflow.add_edge("verify_entity_match", "score_sector_sentiment")
+workflow.add_edge("score_sector_sentiment", "extract_risk_signals")
 workflow.add_edge("extract_risk_signals", "classify_risks")
 workflow.add_edge("classify_risks", END)
 
@@ -413,7 +770,20 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "industry": request.industry,
             "search_results": {},
             "escalation_triggered": False,
-            "escalation_results": {},
+            "triggered_keywords": [],
+            "escalation_results": [],
+            "deep_search_backend": "",
+            "escalation_query_count": 0,
+            "verified_findings": [],
+            "rejected_findings": [],
+            "entity_verification_ran": False,
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "",
+            "cin": getattr(request, "cin", None),
             "risk_signals": [],
             "classification": {}
         }
@@ -561,7 +931,20 @@ if __name__ == "__main__":
             "industry": industry,
             "search_results": {},
             "escalation_triggered": False,
-            "escalation_results": {},
+            "triggered_keywords": [],
+            "escalation_results": [],
+            "deep_search_backend": "",
+            "escalation_query_count": 0,
+            "verified_findings": [],
+            "rejected_findings": [],
+            "entity_verification_ran": False,
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "",
+            "cin": None,
             "risk_signals": [],
             "classification": {}
         }

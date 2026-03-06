@@ -13,7 +13,20 @@
     "EBITDA_vs_Floor",
     "Revenue_Log",
     "Rating_Score",
-    "Sector_Encoded"
+    "Sector_Encoded",
+    "Debt_Outlier",
+    "DSCR_Outlier",
+    "Revenue_Decline_Extreme",
+    "NPM_Negative",
+    "Debt_to_EBITDA",
+    "Interest_Burden_Ratio",
+    "DSCR_Stress_Margin",
+    "Liquidity_Stress",
+    "Financial_Risk_Score",
+    "Fin_Anomaly_Score",
+    "Fin_Is_Anomaly_Flag",
+    "Fin_Red_Flag_Count",
+    "Critical_Financial_Distress"
   ],
   "model_2_features": [
     "GST_Filing_Delay_Days",
@@ -27,7 +40,21 @@
     "Cash_Deposit_Ratio",
     "GST_Scrutiny_Notice_Flag",
     "GST_Variance_vs_Sector",
-    "Sector_Encoded"
+    "Sector_Encoded",
+    "GST_Variance_Anomaly",
+    "GST_Variance_Severe",
+    "GST_Filing_Chronic_Delay",
+    "ITC_Mismatch_Fraud_Flag",
+    "Payment_Delay_Chronic",
+    "Round_Trip_Flag",
+    "Cash_Deposit_High",
+    "Previous_Default_Flag",
+    "Rating_Downgrade_Flag",
+    "Behaviour_Risk_Score",
+    "Beh_Anomaly_Score",
+    "Beh_Is_Anomaly_Flag",
+    "Beh_Red_Flag_Count",
+    "Critical_Behaviour_Distress"
   ],
   "model_3_features": [
     "Industry_Growth_Rate",
@@ -38,7 +65,14 @@
     "Sector_News_Sentiment",
     "Regulatory_Action_Flag",
     "Sector_Encoded",
-    "Revenue_Log"
+    "Revenue_Log",
+    "Industry_Headwind",
+    "Sector_High_Volatility",
+    "Regulatory_Risk_Amplified",
+    "Supply_Chain_Stressed",
+    "Commodity_Exposure_High",
+    "Sector_Sentiment_Headwind",
+    "Industry_Risk_Score"
   ],
   "model_4_features": [
     "Litigation_Count",
@@ -51,7 +85,13 @@
     "DIN_Disqualification_Flag",
     "Auditor_Qualified_Opinion_Flag",
     "SARFAESI_Action_Flag",
-    "Sector_Encoded"
+    "Sector_Encoded",
+    "Litigation_Severe",
+    "NCLT_Critical",
+    "Distressed_Proceedings",
+    "Fraud_Keywords_Present",
+    "Governance_Critical",
+    "Character_Risk_Score"
   ],
   "meta_features": [
     "pd_m1",
