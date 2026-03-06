@@ -60,6 +60,7 @@ class ResearchRequest(BaseModel):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str] = None
 
 class ResearchResponse(BaseModel):
     job_id: str
@@ -81,14 +82,24 @@ class ResearchState(TypedDict):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str]
     search_results: Dict[str, List[Any]] # Any because we'll convert SearchResult to dict
     escalation_triggered: bool
     triggered_keywords: List[str]
     escalation_results: List[Any]
     deep_search_backend: str
     escalation_query_count: int
+    verified_findings: List[Dict[str, Any]]
+    rejected_findings: List[Dict[str, Any]]
+    entity_verification_ran: bool
     risk_signals: List[str]
     classification: Dict[str, Any] # Store the parsed JSON output from Claude
+
+class VerifiedFinding(BaseModel):
+    result: Dict[str, Any]
+    match: Optional[bool]
+    confidence: str
+    reason: str
 
 class SearchResult(BaseModel):
     title: str
@@ -236,7 +247,7 @@ async def check_escalation(state: ResearchState) -> ResearchState:
 def should_escalate(state: ResearchState) -> str:
     if state.get("escalation_triggered", False):
         return "run_escalation_searches"
-    return "extract_risk_signals"
+    return "verify_entity_match"
 
 async def run_escalation_searches(state: ResearchState) -> ResearchState:
     logger.info("Node: run_escalation_searches")
@@ -265,6 +276,126 @@ async def run_escalation_searches(state: ResearchState) -> ResearchState:
         "escalation_query_count": query_count
     }
 
+async def verify_entity_match(state: ResearchState) -> ResearchState:
+    logger.info("Node: verify_entity_match")
+    company_name = state["company_name"]
+    promoter_names = state["promoter_names"]
+    cin = state.get("cin")
+
+    all_results = []
+    for category, results_list in state.get("search_results", {}).items():
+        all_results.extend(results_list)
+    all_results.extend(state.get("escalation_results", []))
+
+    LEGAL_KEYWORDS = ["NCLT", "court", "petition", "FIR", "arrested", "ED",
+                      "fraud", "default", "NPA", "SEBI", "CBI", "DRT", "SARFAESI"]
+
+    legal_results = [
+        r for r in all_results
+        if any(kw.lower() in (r.get("title", "") + " " + r.get("snippet", r.get("content", ""))).lower() for kw in LEGAL_KEYWORDS)
+    ]
+
+    if not legal_results:
+        return {
+            "verified_findings": [], 
+            "rejected_findings": [], 
+            "entity_verification_ran": True
+        }
+
+    verified = []
+    rejected = []
+    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    for result in legal_results:
+        title = result.get("title", "")
+        url = result.get("url", "")
+        snippet = result.get("snippet", result.get("content", ""))
+        
+        verification_prompt = f"""You are an Entity Resolution AI for Indian corporate credit assessment.
+
+A web search returned the following legal finding. Determine if it refers to the SAME
+company/person as the loan applicant, or a different entity with a similar name.
+
+LOAN APPLICANT:
+- Company Name: {company_name}
+- Promoter Names: {', '.join(promoter_names)}
+- CIN: {cin or 'Not available'}
+
+SEARCH RESULT:
+Title: {title}
+URL: {url}
+Snippet: {snippet}
+
+VERIFICATION TASK:
+Does this search result refer to the SAME company or promoter as the loan applicant?
+
+Rules:
+- If the result mentions BOTH a matching promoter name AND the company name → MATCH: TRUE
+- If the result mentions ONLY the name but a DIFFERENT company → MATCH: FALSE
+- If the result mentions the CIN or DIN and it matches → MATCH: TRUE (strong signal)
+- If uncertain (insufficient context) → MATCH: UNCERTAIN
+
+Return ONLY this JSON, nothing else:
+{{"match": true/false/null, "confidence": "HIGH"/"MEDIUM"/"LOW", "reason": "one sentence explanation"}}"""
+
+        try:
+            response = await client.messages.create(
+                model=CLAUDE_RESEARCH_AGENT_MODEL,
+                max_tokens=200,
+                messages=[{"role": "user", "content": verification_prompt}]
+            )
+            raw_output = response.content[0].text
+            
+            try:
+                if "```json" in raw_output:
+                    json_str = raw_output.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_output:
+                    json_str = raw_output.split("```")[1].split("```")[0].strip()
+                else:
+                    json_str = raw_output.strip()
+                parsed = json.loads(json_str)
+            except json.JSONDecodeError:
+                parsed = {}
+            
+            match = parsed.get("match")
+            confidence = parsed.get("confidence", "LOW")
+            reason = parsed.get("reason", "Verification parse error" if not parsed else "")
+
+            finding_dict = {
+                "result": result,
+                "match": match,
+                "confidence": confidence,
+                "reason": reason
+            }
+
+            if match is True:
+                verified.append(finding_dict)
+            elif match is False:
+                rejected.append(finding_dict)
+            else: 
+                finding_dict["confidence"] = "LOW"
+                verified.append(finding_dict)
+        except Exception as e:
+            logger.error(f"Entity verification API error: {e}")
+            verified.append({
+                "result": result,
+                "match": None,
+                "confidence": "LOW",
+                "reason": f"API error: {str(e)}"
+            })
+
+    logger.info(
+        f"Entity verification: {len(verified)} verified, "
+        f"{len(rejected)} rejected (name collision), "
+        f"{len([v for v in verified if v.get('confidence') == 'LOW'])} uncertain"
+    )
+    
+    return {
+        "verified_findings": verified,
+        "rejected_findings": rejected,
+        "entity_verification_ran": True
+    }
+
 async def extract_risk_signals(state: ResearchState) -> ResearchState:
     logger.info("Node: extract_risk_signals")
     # A simple mock extraction for now.
@@ -274,6 +405,9 @@ async def extract_risk_signals(state: ResearchState) -> ResearchState:
         if state.get("escalation_results"):
             signals.append(f"Found {len(state['escalation_results'])} deep records from escalating searches.")
             
+    if state.get("rejected_findings"):
+        signals.append(f"Entity verification rejected {len(state['rejected_findings'])} findings as name collisions.")
+        
     if not signals:
         signals.append("No immediate red flags detected.")
         
@@ -376,12 +510,16 @@ class ResearchState(TypedDict):
     company_name: str
     promoter_names: List[str]
     industry: str
+    cin: Optional[str]
     search_results: Dict[str, List[Any]]
     escalation_triggered: bool
     triggered_keywords: List[str]
     escalation_results: List[Any]
     deep_search_backend: str
     escalation_query_count: int
+    verified_findings: List[Dict[str, Any]]
+    rejected_findings: List[Dict[str, Any]]
+    entity_verification_ran: bool
     risk_signals: List[str]
     classification: Dict[str, Any]
 
@@ -389,13 +527,15 @@ class ResearchState(TypedDict):
 workflow.add_node("run_base_searches", make_tracked_node("run_base_searches", run_base_searches))
 workflow.add_node("check_escalation", make_tracked_node("check_escalation", check_escalation))
 workflow.add_node("run_escalation_searches", make_tracked_node("run_escalation_searches", run_escalation_searches))
+workflow.add_node("verify_entity_match", make_tracked_node("verify_entity_match", verify_entity_match))
 workflow.add_node("extract_risk_signals", make_tracked_node("extract_risk_signals", extract_risk_signals))
 workflow.add_node("classify_risks", make_tracked_node("classify_risks", classify_risks))
 
 workflow.set_entry_point("run_base_searches")
 workflow.add_edge("run_base_searches", "check_escalation")
 workflow.add_conditional_edges("check_escalation", should_escalate)
-workflow.add_edge("run_escalation_searches", "extract_risk_signals")
+workflow.add_edge("run_escalation_searches", "verify_entity_match")
+workflow.add_edge("verify_entity_match", "extract_risk_signals")
 workflow.add_edge("extract_risk_signals", "classify_risks")
 workflow.add_edge("classify_risks", END)
 
@@ -419,6 +559,10 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "escalation_results": [],
             "deep_search_backend": "",
             "escalation_query_count": 0,
+            "verified_findings": [],
+            "rejected_findings": [],
+            "entity_verification_ran": False,
+            "cin": getattr(request, "cin", None),
             "risk_signals": [],
             "classification": {}
         }
@@ -570,6 +714,10 @@ if __name__ == "__main__":
             "escalation_results": [],
             "deep_search_backend": "",
             "escalation_query_count": 0,
+            "verified_findings": [],
+            "rejected_findings": [],
+            "entity_verification_ran": False,
+            "cin": None,
             "risk_signals": [],
             "classification": {}
         }
