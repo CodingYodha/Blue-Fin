@@ -199,7 +199,8 @@ async def run_cro_persona(
 ) -> Dict[str, Any]:
     llm = ChatAnthropic(
         model_name="claude-3-5-sonnet-20240620",
-        temperature=0.0
+        temperature=0.0,
+        max_tokens=3000
     )
     
     prompt = build_cro_prompt(ctx, accountant_output, compliance_output)
