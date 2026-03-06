@@ -10,17 +10,11 @@ from .research_agent import (
     jobs,
     JobStatusResponse
 )
+from .schemas import RunAgentRequest
 
 router = APIRouter(prefix="/api/v1/research-agent", tags=["Research Agent"])
 
 BASE_PATH = Path("/tmp/intelli-credit")
-
-class ResearchAgentRunRequest(BaseModel):
-    job_id: str
-    company_name: str
-    promoter_names: List[str]
-    industry: str
-    cin: Optional[str] = None
 
 class ResearchAgentRunResponse(BaseModel):
     status: str
@@ -28,7 +22,7 @@ class ResearchAgentRunResponse(BaseModel):
     message: str
 
 @router.post("/run", response_model=ResearchAgentRunResponse)
-async def run_research_agent(request: ResearchAgentRunRequest, background_tasks: BackgroundTasks):
+async def run_research_agent(request: RunAgentRequest, background_tasks: BackgroundTasks):
     job_dir = BASE_PATH / request.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     
