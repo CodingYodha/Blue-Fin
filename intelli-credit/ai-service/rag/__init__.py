@@ -4,6 +4,7 @@ RAG module — Retrieval Augmented Generation pipeline for Intelli-Credit.
 Sub-modules:
   - qdrant_client : Qdrant connection singleton, collection setup, health check
   - embedder      : Jina AI cloud API embedding (768-dim, batch of 32)
+  - ingestor      : Reads Go service chunks, embeds, stores in Qdrant
 """
 
 from .qdrant_client import (
@@ -21,6 +22,13 @@ from .embedder import (
     ChunkEmbedding,
     JINA_MODEL,
 )
+from .ingestor import (
+    ingest_chunks_for_job,
+    ingest_all_documents,
+    delete_job_chunks,
+    assign_embed_priority,
+    IngestResult,
+)
 
 __all__ = [
     "get_client",
@@ -34,4 +42,9 @@ __all__ = [
     "ChunkInput",
     "ChunkEmbedding",
     "JINA_MODEL",
+    "ingest_chunks_for_job",
+    "ingest_all_documents",
+    "delete_job_chunks",
+    "assign_embed_priority",
+    "IngestResult",
 ]
