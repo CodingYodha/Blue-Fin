@@ -41,5 +41,5 @@ joblib
 pandas
 scikit-learn
 lightgbm
-shap
-duckdb
+shap>=0.44.0
+duckdb>=0.10.0

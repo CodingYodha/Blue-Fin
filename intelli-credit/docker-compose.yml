@@ -6,6 +6,7 @@ services:
     env_file: .env
     volumes:
       - /tmp/intelli-credit:/tmp/intelli-credit
+      - ${MODEL_ARTIFACTS_PATH}:/models/ml_artifacts:ro
       - ${DEEPSEEK_MODEL_PATH}:/models/deepseek-vl2-tiny:ro
     deploy:
       resources:
