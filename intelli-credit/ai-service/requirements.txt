@@ -42,3 +42,4 @@ pandas
 scikit-learn
 lightgbm
 shap
+duckdb

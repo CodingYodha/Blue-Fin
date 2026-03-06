@@ -7,6 +7,7 @@ import numpy as np
 import os
 
 from .model_loader import MLArtifacts, get_sector_config
+from .data_reader import read_go_features
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +44,6 @@ def safe_float(d: dict, *keys, default=0.0) -> float:
     except (TypeError, ValueError):
         return default
 
-async def read_go_features(job_id: str) -> dict:
-    # Dummy async function mimicking Databricks/DuckDB call. To be refined by another module.
-    # The read_go_features implementation was left as a placeholder in the prompt "see Prompt 3"
-    # Wait, the prompt implies read_go_features is not to be fully written here but in Prompt 3.
-    # However, I need to provide something so it compiles. 
-    logger.warning(f"read_go_features not fully implemented yet for {job_id}")
-    return {}
-
 async def assemble_features(job_id: str, artifacts: MLArtifacts) -> FeatureAssemblyResult:
     warnings_list = []
     
@@ -71,18 +64,15 @@ async def assemble_features(job_id: str, artifacts: MLArtifacts) -> FeatureAssem
     res = load_json("research_agent_summary.json")
     ocr = load_json("ocr_output.json")
     
-    # Placeholder for Go Databricks / DuckDB features
+    # Read Go Databricks / DuckDB features using the data_reader module
     try:
-        # Prompt 3 handles the actual reading; assuming for now we read from a local stub or return empty
-        # Let's see if the file exists from previous prompts, or just return empty for now
-        go_path = f"{base_path}/go_features.json"
-        if os.path.exists(go_path):
-            with open(go_path, "r") as f:
-                go = json.load(f)
-        else:
-            go = {}
+        go = await read_go_features(job_id)
     except Exception as e:
-        go = {}
+        msg = f"Failed to load go_features: {e}"
+        logger.error(msg)
+        warnings_list.append(msg)
+        from .data_reader import GoFeatures
+        go = GoFeatures()
 
     # === BASE VALUES EXTRACTION ===
 
