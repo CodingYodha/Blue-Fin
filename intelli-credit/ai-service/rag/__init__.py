@@ -6,6 +6,7 @@ Sub-modules:
   - embedder      : Jina AI cloud API embedding (768-dim, batch of 32)
   - ingestor      : Reads Go service chunks, embeds, stores in Qdrant
   - retriever     : Query-time search, extraction target mapping, prompt formatting
+  - extractor     : Claude-based structured extraction from retrieved chunks
 """
 
 from .qdrant_client import (
@@ -37,6 +38,14 @@ from .retriever import (
     RetrievedChunk,
     EXTRACTION_QUERIES,
 )
+from .extractor import (
+    extract_financial_summary,
+    extract_qualitative_signals,
+    extract_covenant_and_collateral,
+    extract_rating_intelligence,
+    run_full_extraction,
+    RAGExtractionResult,
+)
 
 __all__ = [
     "get_client",
@@ -60,5 +69,10 @@ __all__ = [
     "format_chunks_for_prompt",
     "RetrievedChunk",
     "EXTRACTION_QUERIES",
+    "extract_financial_summary",
+    "extract_qualitative_signals",
+    "extract_covenant_and_collateral",
+    "extract_rating_intelligence",
+    "run_full_extraction",
+    "RAGExtractionResult",
 ]
-
