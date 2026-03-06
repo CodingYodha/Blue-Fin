@@ -1,19 +1,11 @@
 import { useState } from "react";
-import {
-  FileText,
-  Table,
-  Building2,
-  Receipt,
-  Briefcase,
-  CheckCircle,
-} from "lucide-react";
 
-const ICONS = {
-  annual_report: { icon: FileText, color: "text-orange-400" },
-  gst_filing: { icon: Table, color: "text-accent3" },
-  bank_statement: { icon: Building2, color: "text-accent" },
-  itr: { icon: Receipt, color: "text-warn" },
-  mca: { icon: Briefcase, color: "text-accent2" },
+const SYMBOLS = {
+  annual_report: { glyph: "◎", color: "#f97316" },
+  gst_filing: { glyph: "⬡", color: "#10b981" },
+  bank_statement: { glyph: "◈", color: "#00d4ff" },
+  itr: { glyph: "◆", color: "#f59e0b" },
+  mca: { glyph: "◉", color: "#7c3aed" },
 };
 
 function formatSize(bytes) {
@@ -82,19 +74,22 @@ export default function FileDropZone({
     document.getElementById("file-input-" + fileType).click();
   }
 
-  const { icon: Icon, color } = ICONS[fileType] || {
-    icon: FileText,
-    color: "text-muted",
+  const { glyph, color } = SYMBOLS[fileType] || {
+    glyph: "○",
+    color: "#64748b",
   };
 
-  let borderClass = "border-border bg-surface2";
-  if (isDragging) borderClass = "border-accent bg-accent/5";
-  else if (file) borderClass = "border-accent3 bg-accent3/5";
+  const borderStyle = isDragging
+    ? { borderColor: "#00d4ff", background: "rgba(0,212,255,0.04)" }
+    : file
+      ? { borderColor: "#10b981", background: "rgba(16,185,129,0.04)" }
+      : { borderColor: "#1e2d45", background: "transparent" };
 
   return (
     <div>
       <div
-        className={`border-2 border-dashed rounded-lg p-4 cursor-pointer transition-colors ${borderClass}`}
+        className="border-2 border-dashed rounded-2xl p-5 cursor-pointer transition-all duration-200 hover:border-accent/50"
+        style={borderStyle}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -109,18 +104,23 @@ export default function FileDropZone({
         />
 
         {file ? (
-          <div className="flex items-start gap-3">
-            <CheckCircle className="text-accent3 shrink-0 mt-0.5" size={20} />
+          <div className="flex items-center gap-3">
+            <span
+              className="text-xl font-mono shrink-0"
+              style={{ color: "#10b981" }}
+            >
+              ✓
+            </span>
             <div className="flex-1 min-w-0">
-              <p className="text-textprimary text-sm font-medium truncate">
-                {truncate(file.name, 30)}
+              <p className="text-textprimary text-sm font-medium truncate leading-tight">
+                {truncate(file.name, 32)}
               </p>
               <p className="text-muted text-xs mt-0.5">
                 {formatSize(file.size)}
               </p>
             </div>
             <button
-              className="text-muted hover:text-danger text-lg leading-none shrink-0"
+              className="shrink-0 text-muted hover:text-danger transition-colors text-base leading-none w-6 h-6 flex items-center justify-center rounded-full hover:bg-danger/10"
               onClick={(e) => {
                 e.stopPropagation();
                 onFileSelect(null);
@@ -130,26 +130,36 @@ export default function FileDropZone({
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center text-center gap-1.5 py-2">
-            <Icon className={color} size={24} />
+          <div className="flex flex-col items-center text-center gap-2 py-3">
+            <span
+              className="text-2xl"
+              style={{ color, fontFamily: "monospace" }}
+            >
+              {glyph}
+            </span>
             <div>
               <p className="text-textprimary text-sm font-medium">{label}</p>
-              <p className="text-muted text-xs">{description}</p>
-              <p className="text-muted text-xs mt-0.5">{acceptedFormats}</p>
+              <p className="text-muted text-xs mt-0.5">{description}</p>
+              <p className="text-muted text-xs mt-0.5 font-mono">
+                {acceptedFormats}
+              </p>
             </div>
             <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                required
-                  ? "bg-danger/10 text-danger border border-danger/30"
-                  : "bg-surface text-muted border border-border"
-              }`}
+              className="text-[10px] font-mono px-2.5 py-0.5 rounded-full"
+              style={{
+                background: required
+                  ? "rgba(239,68,68,0.08)"
+                  : "rgba(100,116,139,0.12)",
+                color: required ? "#ef4444" : "#64748b",
+                border: `1px solid ${required ? "rgba(239,68,68,0.25)" : "rgba(100,116,139,0.25)"}`,
+              }}
             >
               {required ? "Required" : "Optional"}
             </span>
           </div>
         )}
       </div>
-      {extError && <p className="text-danger text-xs mt-1">{extError}</p>}
+      {extError && <p className="text-danger text-xs mt-1.5">{extError}</p>}
     </div>
   );
 }
