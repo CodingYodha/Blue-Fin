@@ -28,6 +28,7 @@ Pillow
 tavily-python
 langgraph
 langchain-anthropic
+duckduckgo-search>=6.0.0
 
 # Vector DB (existing)
 qdrant-client>=1.9.0
