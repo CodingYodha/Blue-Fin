@@ -36,6 +36,8 @@ from rag import (
 )
 from rag.qdrant_client import close_client as close_qdrant
 from rag.routes import router as rag_router
+from ml_core.routes import router as scoring_router
+from cam.routes import router as cam_router
 
 load_dotenv()
 
@@ -105,6 +107,12 @@ app.include_router(entity_graph_router)
 
 # Include RAG router
 app.include_router(rag_router)
+
+# Include ML Scoring router (V11+)
+app.include_router(scoring_router)
+
+# Include CAM Generation and Officer Notes router (V11+)
+app.include_router(cam_router)
 
 # Shared volume base path (Docker mount)
 BASE_PATH = Path("/tmp/intelli-credit")
