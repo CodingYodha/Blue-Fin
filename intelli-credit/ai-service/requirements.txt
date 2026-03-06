@@ -8,6 +8,8 @@ aiofiles
 
 # PDF processing
 PyMuPDF
+
+# Fuzzy string matching (V12 fix — always pair thefuzz with python-Levenshtein for 4-10x speedup)
 thefuzz
 python-Levenshtein
 
@@ -30,5 +32,5 @@ langchain-anthropic
 # Vector DB (existing)
 qdrant-client
 
-# Graph DB (Entity Graph)
-neo4j
+# Graph DB (Entity Graph — Neo4j)
+neo4j>=5.0.0
