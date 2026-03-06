@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   Banknote,
 } from "lucide-react";
+import ConfidenceBadge from "../ConfidenceBadge.jsx";
 
 const PENALTIES = {
   gst_bank_flag: { CRITICAL: -40, HIGH: -35, MEDIUM: -15, CLEAN: 0 },
@@ -72,6 +73,7 @@ function FraudCard({
   icon: Icon,
   title,
   flag,
+  confidence,
   value,
   explanation,
   penaltyKey,
@@ -96,7 +98,10 @@ function FraudCard({
             {title}
           </span>
         </div>
-        <FlagBadge flag={flag} />
+        <div className="flex items-center gap-2">
+          {confidence && <ConfidenceBadge confidence={confidence} />}
+          <FlagBadge flag={flag} />
+        </div>
       </div>
       <p className="text-accent font-mono text-lg font-bold">{value}</p>
       <p className="text-muted text-xs leading-relaxed">{explanation}</p>
@@ -130,12 +135,16 @@ export default function FraudTab({ fraudFeatures }) {
   const {
     gst_bank_variance_pct,
     gst_bank_flag,
+    gst_bank_confidence,
     gstr_mismatch_pct,
     gstr_flag,
+    gstr_confidence,
     round_trip_count,
     round_trip_flag,
+    round_trip_confidence,
     cash_deposit_ratio,
     cash_flag,
+    cash_confidence,
   } = fraudFeatures;
 
   const worst = worstFlag(gst_bank_flag, gstr_flag, round_trip_flag, cash_flag);
@@ -169,6 +178,7 @@ export default function FraudTab({ fraudFeatures }) {
           icon={ShieldAlert}
           title="GST vs Bank Variance"
           flag={gst_bank_flag}
+          confidence={gst_bank_confidence}
           value={`${gst_bank_variance_pct ?? 0}% variance`}
           explanation="GST declared turnover vs actual bank credits. A gap above 30% suggests revenue inflation or parallel economy income."
           penaltyKey="gst_bank_flag"
@@ -186,6 +196,7 @@ export default function FraudTab({ fraudFeatures }) {
           icon={FileWarning}
           title="GSTR-2A vs GSTR-3B Mismatch"
           flag={gstr_flag}
+          confidence={gstr_confidence}
           value={`${gstr_mismatch_pct ?? 0}% mismatch`}
           explanation="ITC claimed by company vs ITC declared by suppliers. Above 15% gap suggests fake invoice issuance or shell vendor network."
           penaltyKey="gstr_flag"
@@ -203,6 +214,7 @@ export default function FraudTab({ fraudFeatures }) {
           icon={ArrowLeftRight}
           title="Round-Trip Transactions"
           flag={round_trip_flag}
+          confidence={round_trip_confidence}
           value={`${round_trip_count ?? 0} patterns detected`}
           explanation="Money-in followed by near-identical money-out within 48 hours. Mathematical fingerprint of circular trading."
           penaltyKey="round_trip_flag"
@@ -213,6 +225,7 @@ export default function FraudTab({ fraudFeatures }) {
           icon={Banknote}
           title="Cash Deposit Ratio"
           flag={cash_flag}
+          confidence={cash_confidence}
           value={`${cash_deposit_ratio ?? 0}% of total credits`}
           explanation="Cash deposits as % of total bank credits. Above 40% for B2B companies suggests cash economy revenue inflation."
           penaltyKey="cash_flag"

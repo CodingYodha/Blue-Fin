@@ -14,7 +14,16 @@ export default function AnalysisPage() {
   const [isComplete, setIsComplete] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [sseError, setSseError] = useState(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const sourceRef = useRef(null);
+
+  useEffect(() => {
+    function onResize() {
+      setIsMobile(window.innerWidth < 768);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   function handleEvent(event) {
     if (event.type === "progress" || event.type === "failover") {
@@ -50,7 +59,7 @@ export default function AnalysisPage() {
 
   if (sseError) {
     return (
-      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
+      <div className="page-enter min-h-screen bg-bg flex items-center justify-center p-6">
         <div className="bg-danger/10 border border-danger rounded-xl p-8 max-w-md w-full text-center">
           <p className="text-danger font-mono text-sm uppercase tracking-widest mb-2">
             Pipeline Error
@@ -67,6 +76,25 @@ export default function AnalysisPage() {
     );
   }
 
+  if (isMobile) {
+    return (
+      <div className="page-enter min-h-screen bg-bg flex flex-col items-center justify-center gap-5 p-8 text-center">
+        <span className="font-mono text-accent text-xl font-bold tracking-widest">
+          INTELLI-CREDIT
+        </span>
+        <p className="text-textprimary font-semibold">
+          Analysis dashboard is optimised for desktop.
+        </p>
+        <p className="text-muted text-sm">
+          Please open this page on a larger screen.
+        </p>
+        <Link to="/" className="text-accent underline text-sm">
+          ← Back to Home
+        </Link>
+      </div>
+    );
+  }
+
   if (!isComplete) {
     return (
       <PipelineProgress
@@ -78,7 +106,7 @@ export default function AnalysisPage() {
   }
 
   return (
-    <div className="bg-bg min-h-screen">
+    <div className="page-enter bg-bg min-h-screen">
       <ResultsDashboard
         result={result}
         activeTab={activeTab}

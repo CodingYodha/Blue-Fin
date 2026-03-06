@@ -104,7 +104,7 @@ export default function UploadPage() {
   }
 
   return (
-    <div className="bg-bg min-h-screen flex items-center justify-center p-6">
+    <div className="page-enter bg-bg min-h-screen flex items-center justify-center p-6">
       <div className="bg-surface border border-border rounded-xl p-8 w-full max-w-3xl">
         {/* Header */}
         <div className="mb-6">

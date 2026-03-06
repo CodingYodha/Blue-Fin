@@ -7,6 +7,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
+import ConfidenceBadge from "../ConfidenceBadge.jsx";
 
 const SCENARIO_LABELS = {
   revenue_shock: "Revenue Shock (−20%)",
@@ -151,6 +152,9 @@ export default function ScoreTab({
               {scoreBreakdown.final_score}
             </p>
             <p className="text-muted font-mono text-xs">/ 100</p>
+            {scoreBreakdown.confidence && (
+              <ConfidenceBadge confidence={scoreBreakdown.confidence} />
+            )}
           </div>
 
           {/* Layer 2 */}

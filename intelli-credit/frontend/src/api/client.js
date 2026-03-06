@@ -4,6 +4,15 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 const api = axios.create({ baseURL: BASE_URL, timeout: 30000 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const message =
+      error.response?.data?.error || error.message || "Request failed";
+    return Promise.reject(new Error(message));
+  },
+);
+
 export async function createJob(companyName) {
   const res = await api.post("/api/jobs", { company_name: companyName });
   return res.data;
