@@ -1,16 +1,16 @@
-const { Hono } = require("hono");
-const { serve } = require("@hono/node-server");
-const { cors } = require("hono/cors");
-const config = require("./config");
-const errorHandler = require("./middleware/errorHandler");
-const setupTmp = require("./lib/setupTmp");
-const {
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { cors } from "hono/cors";
+import config from "./config.js";
+import errorHandler from "./middleware/errorHandler.js";
+import setupTmp from "./lib/setupTmp.js";
+import {
   jobsRouter,
   uploadRouter,
   analysisRouter,
   officerRouter,
   camRouter,
-} = require("./routes/index");
+} from "./routes/index.js";
 
 const app = new Hono();
 

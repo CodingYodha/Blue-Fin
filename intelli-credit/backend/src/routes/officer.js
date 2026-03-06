@@ -1,7 +1,7 @@
-const { Hono } = require("hono");
-const supabase = require("../lib/supabase");
-const { getJob } = require("../services/jobService");
-const { processOfficerNotes } = require("../services/officerNotesService");
+import { Hono } from "hono";
+import supabase from "../lib/supabase.js";
+import { getJob } from "../services/jobService.js";
+import { processOfficerNotes } from "../services/officerNotesService.js";
 
 const router = new Hono();
 
@@ -61,4 +61,4 @@ router.get("/:jobId/notes", async (c) => {
   return c.json(data || []);
 });
 
-module.exports = router;
+export default router;

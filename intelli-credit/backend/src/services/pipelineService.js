@@ -1,7 +1,7 @@
-const axios = require("axios");
-const config = require("../config");
-const { getJob, updateJobStatus } = require("./jobService");
-const { sendEvent, closeConnection } = require("../lib/sse");
+import axios from "axios";
+import config from "../config.js";
+import { getJob, updateJobStatus } from "./jobService.js";
+import { sendEvent, closeConnection } from "../lib/sse.js";
 
 const AXIOS_TIMEOUT = 120000;
 
@@ -344,4 +344,4 @@ async function runPipeline(jobId) {
   }
 }
 
-module.exports = { runPipeline };
+export { runPipeline };

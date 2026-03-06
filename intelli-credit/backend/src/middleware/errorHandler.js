@@ -1,4 +1,4 @@
-async function errorHandler(c, next) {
+export default async function errorHandler(c, next) {
   try {
     await next();
   } catch (err) {
@@ -11,5 +11,3 @@ async function errorHandler(c, next) {
     );
   }
 }
-
-module.exports = errorHandler;

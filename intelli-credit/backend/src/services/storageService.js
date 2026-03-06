@@ -1,7 +1,7 @@
-const fs = require("fs");
-const path = require("path");
-const config = require("../config");
-const supabase = require("../lib/supabase");
+import fs from "fs";
+import path from "path";
+import config from "../config.js";
+import supabase from "../lib/supabase.js";
 
 function saveFileToDisk(jobId, fileBuffer, filename) {
   const folderPath = path.join(config.sharedTmpPath, jobId);
@@ -23,4 +23,4 @@ async function uploadToSupabase(jobId, filePath, fileName) {
   return storagePath;
 }
 
-module.exports = { saveFileToDisk, uploadToSupabase };
+export { saveFileToDisk, uploadToSupabase };

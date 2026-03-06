@@ -1,4 +1,4 @@
-require("dotenv").config();
+import "dotenv/config";
 
 const config = {
   port: process.env.PORT || 3001,
@@ -9,4 +9,4 @@ const config = {
   sharedTmpPath: process.env.SHARED_TMP_PATH || "./tmp/intelli-credit",
 };
 
-module.exports = config;
+export default config;

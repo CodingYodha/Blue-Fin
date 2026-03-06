@@ -1,11 +1,7 @@
-const { Hono } = require("hono");
-const { runPipeline } = require("../services/pipelineService");
-const { getJob } = require("../services/jobService");
-const {
-  registerConnection,
-  sendEvent,
-  closeConnection,
-} = require("../lib/sse");
+import { Hono } from "hono";
+import { runPipeline } from "../services/pipelineService.js";
+import { getJob } from "../services/jobService.js";
+import { registerConnection, sendEvent, closeConnection } from "../lib/sse.js";
 
 const router = new Hono();
 
@@ -73,4 +69,4 @@ router.get("/:jobId/result", async (c) => {
   return c.json(job.result);
 });
 
-module.exports = router;
+export default router;

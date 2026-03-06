@@ -1,5 +1,5 @@
-const { createClient } = require("@supabase/supabase-js");
-const config = require("../config");
+import { createClient } from "@supabase/supabase-js";
+import config from "../config.js";
 
 let supabase = null;
 
@@ -17,7 +17,7 @@ function getClient() {
 }
 
 // Proxy so callers can do `supabase.from(...)` directly
-module.exports = new Proxy(
+export default new Proxy(
   {},
   {
     get(_, prop) {

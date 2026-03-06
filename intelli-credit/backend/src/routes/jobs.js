@@ -1,5 +1,5 @@
-const { Hono } = require("hono");
-const { createJob, getJob, listJobs } = require("../services/jobService");
+import { Hono } from "hono";
+import { createJob, getJob, listJobs } from "../services/jobService.js";
 
 const router = new Hono();
 
@@ -45,4 +45,4 @@ router.get("/:jobId/status", async (c) => {
   });
 });
 
-module.exports = router;
+export default router;

@@ -1,7 +1,7 @@
-const axios = require("axios");
-const config = require("../config");
-const supabase = require("../lib/supabase");
-const { getJob, updateJobStatus } = require("./jobService");
+import axios from "axios";
+import config from "../config.js";
+import supabase from "../lib/supabase.js";
+import { getJob, updateJobStatus } from "./jobService.js";
 
 const INJECTION_KEYWORDS = [
   "ignore",
@@ -143,4 +143,4 @@ async function processOfficerNotes(jobId, rawNotes, officerId) {
   };
 }
 
-module.exports = { processOfficerNotes };
+export { processOfficerNotes };

@@ -1,12 +1,12 @@
-const { Hono } = require("hono");
-const multer = require("multer");
-const path = require("path");
-const supabase = require("../lib/supabase");
-const { getJob, updateJobStatus } = require("../services/jobService");
-const {
+import { Hono } from "hono";
+import multer from "multer";
+import path from "path";
+import supabase from "../lib/supabase.js";
+import { getJob, updateJobStatus } from "../services/jobService.js";
+import {
   saveFileToDisk,
   uploadToSupabase,
-} = require("../services/storageService");
+} from "../services/storageService.js";
 
 const ALLOWED_EXTENSIONS = [".pdf", ".csv", ".xlsx"];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
@@ -83,4 +83,4 @@ router.post("/:jobId", async (c) => {
   }
 });
 
-module.exports = router;
+export default router;

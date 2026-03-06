@@ -1,5 +1,5 @@
-const { v4: uuidv4 } = require("uuid");
-const supabase = require("../lib/supabase");
+import { v4 as uuidv4 } from "uuid";
+import supabase from "../lib/supabase.js";
 
 async function createJob(companyName) {
   const { data, error } = await supabase
@@ -49,4 +49,4 @@ async function listJobs() {
   return data || [];
 }
 
-module.exports = { createJob, getJob, updateJobStatus, listJobs };
+export { createJob, getJob, updateJobStatus, listJobs };

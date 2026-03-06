@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { createSSEConnection } from "../api/client.js";
 import PipelineProgress from "../components/PipelineProgress.jsx";
 import ResultsDashboard from "../components/ResultsDashboard.jsx";
+import OfficerNotesPanel from "../components/OfficerNotesPanel.jsx";
 
 export default function AnalysisPage() {
   const { jobId } = useParams();
@@ -77,11 +78,31 @@ export default function AnalysisPage() {
   }
 
   return (
-    <ResultsDashboard
-      result={result}
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
-      jobId={jobId}
-    />
+    <div className="bg-bg min-h-screen">
+      <ResultsDashboard
+        result={result}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        jobId={jobId}
+      />
+      <div className="max-w-6xl mx-auto px-6 pb-12">
+        <hr className="border-border mb-0" />
+        <OfficerNotesPanel
+          jobId={jobId}
+          currentScore={result.score_breakdown.final_score}
+          currentDecision={result.score_breakdown.decision}
+          onScoreUpdate={(newScore, newDecision, delta) => {
+            setResult((prev) => ({
+              ...prev,
+              score_breakdown: {
+                ...prev.score_breakdown,
+                final_score: newScore,
+                decision: newDecision,
+              },
+            }));
+          }}
+        />
+      </div>
+    </div>
   );
 }

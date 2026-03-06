@@ -1,7 +1,7 @@
-const { Hono } = require("hono");
-const axios = require("axios");
-const config = require("../config");
-const { getJob, updateJobStatus } = require("../services/jobService");
+import { Hono } from "hono";
+import axios from "axios";
+import config from "../config.js";
+import { getJob, updateJobStatus } from "../services/jobService.js";
 
 const router = new Hono();
 
@@ -69,4 +69,4 @@ router.post("/:jobId/regenerate", async (c) => {
   return c.json(buildCamResponse(updatedJob));
 });
 
-module.exports = router;
+export default router;
