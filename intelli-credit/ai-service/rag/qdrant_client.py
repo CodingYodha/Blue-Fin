@@ -27,6 +27,8 @@ import os
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PayloadSchemaType
 
+from model_config import JINA_EMBEDDING_DIM
+
 logger = logging.getLogger("rag.qdrant_client")
 
 # =============================================================================
@@ -35,8 +37,8 @@ logger = logging.getLogger("rag.qdrant_client")
 
 COLLECTION_NAME = "intelli_credit_chunks"
 
-# Jina's jina-embeddings-v2-base-en produces 768-dimensional vectors
-VECTOR_DIM = 768
+# Vector dimension from centralized model config
+VECTOR_DIM = JINA_EMBEDDING_DIM
 
 # =============================================================================
 # Chunk payload schema (for reference — enforced by the ingest pipeline)

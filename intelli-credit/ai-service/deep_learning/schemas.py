@@ -18,6 +18,11 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from model_config import (
+    CLAUDE_FINANCIAL_EXTRACTION_MODEL,
+    CLAUDE_ENTITY_EXTRACTION_MODEL,
+)
+
 
 # =============================================================================
 # 1. PAGE CLASSIFIER
@@ -244,7 +249,7 @@ class FinancialExtraction(BaseModel):
         ..., description="Document type that was processed"
     )
     extraction_model: str = Field(
-        default="claude-haiku-4-5-20251001",
+        default=CLAUDE_FINANCIAL_EXTRACTION_MODEL,
         description="Claude model used for extraction",
     )
     confidence: Literal["HIGH", "LOW"] = Field(
@@ -431,7 +436,7 @@ class EntityExtraction(BaseModel):
         default=0, description="Total number of entities found across all categories"
     )
     extraction_model: str = Field(
-        default="claude-haiku-4-5-20251001",
+        default=CLAUDE_ENTITY_EXTRACTION_MODEL,
         description="Claude model used for entity extraction",
     )
 

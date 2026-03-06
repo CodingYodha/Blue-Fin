@@ -14,6 +14,7 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
+from model_config import CLAUDE_RESEARCH_AGENT_MODEL
 
 load_dotenv()
 
@@ -323,7 +324,7 @@ Respond ONLY with this JSON:
 
     try:
         response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=CLAUDE_RESEARCH_AGENT_MODEL,
             max_tokens=1000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}]

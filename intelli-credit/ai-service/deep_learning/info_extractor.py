@@ -25,6 +25,10 @@ from typing import Optional
 
 from anthropic import AsyncAnthropic
 
+from model_config import (
+    CLAUDE_FINANCIAL_EXTRACTION_MODEL,
+    CLAUDE_ENTITY_EXTRACTION_MODEL,
+)
 from .schemas import (
     EntityExtraction,
     ExtractionResult,
@@ -38,9 +42,6 @@ from .schemas import (
 )
 
 logger = logging.getLogger("deep_learning.info_extractor")
-
-# Model to use for all extraction calls
-_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +225,7 @@ async def _call_claude(
     text_input = document_text[:12000]
 
     response = await client.messages.create(
-        model=_CLAUDE_MODEL,
+        model=CLAUDE_FINANCIAL_EXTRACTION_MODEL,
         max_tokens=2000,
         system=system_prompt,
         messages=[
@@ -298,7 +299,7 @@ async def extract_financial_ratios(
 
         result = FinancialExtraction(
             doc_type=doc_type,
-            extraction_model=_CLAUDE_MODEL,
+            extraction_model=CLAUDE_FINANCIAL_EXTRACTION_MODEL,
             confidence=confidence,
             revenue=revenue,
             ebitda=ebitda,
@@ -417,7 +418,7 @@ async def extract_entities(
         result = EntityExtraction(
             source_doc_type=doc_type,
             entity_count=entity_count,
-            extraction_model=_CLAUDE_MODEL,
+            extraction_model=CLAUDE_ENTITY_EXTRACTION_MODEL,
             company_name=parsed.get("company_name"),
             cin=parsed.get("cin"),
             promoters=promoters,

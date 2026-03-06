@@ -24,6 +24,8 @@ from typing import Any, Dict, List
 
 import httpx
 
+from model_config import JINA_EMBEDDING_MODEL
+
 logger = logging.getLogger("rag.embedder")
 
 # =============================================================================
@@ -31,7 +33,7 @@ logger = logging.getLogger("rag.embedder")
 # =============================================================================
 
 JINA_API_URL = "https://api.jina.ai/v1/embeddings"
-JINA_MODEL = "jina-embeddings-v2-base-en"
+JINA_MODEL = JINA_EMBEDDING_MODEL  # re-export for backward compatibility
 BATCH_SIZE = 32          # max texts per API call
 INTER_BATCH_DELAY = 0.5  # seconds between batches
 
