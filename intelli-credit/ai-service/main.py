@@ -36,6 +36,7 @@ from rag import (
 )
 from rag.qdrant_client import close_client as close_qdrant
 from rag.routes import router as rag_router
+from agents.routes import router as research_agent_router
 
 load_dotenv()
 
@@ -105,6 +106,9 @@ app.include_router(entity_graph_router)
 
 # Include RAG router
 app.include_router(rag_router)
+
+# Include Research Agent router
+app.include_router(research_agent_router)
 
 # Shared volume base path (Docker mount)
 BASE_PATH = Path("/tmp/intelli-credit")
