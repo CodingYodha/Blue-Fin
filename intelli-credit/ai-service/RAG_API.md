@@ -11,16 +11,21 @@ Step 1:  POST /api/v1/process-document              ← Section 3: OCR + extract
 Step 2:  Poll GET /api/v1/status/{job_id}            ← wait for Section 3
 Step 3:  POST /api/v1/entity-graph/build             ← Section 4: entity graph
 Step 4:  Poll GET /api/v1/entity-graph/{job_id}      ← wait for Section 4
-Step 5:  POST /api/v1/rag/ingest                     ← NEW: embed chunks into Qdrant
+Step 5:  POST /api/v1/rag/ingest                     ← Section 5: embed chunks into Qdrant
 Step 6:  Poll GET /api/v1/rag/ingest-status/{job_id} ← wait for ingestion
-Step 7:  POST /api/v1/rag/extract                    ← NEW: Claude structured extraction
+Step 7:  POST /api/v1/rag/extract                    ← Section 5: Claude structured extraction
 Step 8:  Poll GET /api/v1/rag/extraction/{job_id}    ← get extraction result for ML scorer
+Step 9:  POST /api/v1/research-agent/run             ← NEW Section 6: research agent
+Step 10: Poll GET /api/v1/research-agent/status/{job_id}
 ```
 
 > [!IMPORTANT]
 > Step 5 requires Go service to have already written `chunks.json`.
 > Coordinate with Go service developer: Go must write
 > `/tmp/intelli-credit/{job_id}/chunks.json` before Step 5 is called.
+> 
+> Steps 5-9 can run concurrently — RAG ingestion/extraction and research agent
+> are independent of each other. Both only depend on Section 3 completing.
 
 ---
 
@@ -176,6 +181,75 @@ Delete all Qdrant vectors for a job. Used for cleanup or re-processing.
 | `/tmp/intelli-credit/{job_id}/chunks.json` | Go service | `POST /rag/ingest` |
 | `/tmp/intelli-credit/{job_id}/rag_ingest_summary.json` | `POST /rag/ingest` | `GET /rag/ingest-status` |
 | `/tmp/intelli-credit/{job_id}/rag_extraction.json` | `POST /rag/extract` | `GET /rag/extraction`, ML scorer |
+| `/tmp/intelli-credit/{job_id}/research_agent_output.json` | `POST /research-agent/run` | internal audit, frontend |
+| `/tmp/intelli-credit/{job_id}/research_agent_summary.json` | `POST /research-agent/run` | `GET /research-agent/status`, ML scorer |
+
+---
+
+## POST /api/v1/research-agent/run
+
+Triggers the full LangGraph research agent for a job.
+
+**Request:**
+```json
+{
+  "job_id": "abc123",
+  "company_name": "Mehta Textiles Pvt Ltd",
+  "promoter_names": ["Rajesh Kumar Mehta", "Sunita Mehta"],
+  "industry": "Textile Manufacturing",
+  "cin": "U17111GJ2010PTC123456"
+}
+```
+
+> `cin` is optional, used for entity verification to reduce false positives. These values typically come from the EntityExtraction output of Section 3/4.
+
+**Response (immediate):**
+```json
+{
+  "status": "processing",
+  "job_id": "abc123",
+  "message": "Research agent started"
+}
+```
+
+**Typical completion time:** 60–90 seconds.
+
+---
+
+## GET /api/v1/research-agent/status/{job_id}
+
+Polls for completion of the research agent task. Reads `research_agent_summary.json`.
+
+**Response when complete:**
+```json
+{
+  "status": "ready",
+  "job_id": "abc123",
+  "promoter_risk": "HIGH",
+  "litigation_risk": "ACTIVE",
+  "sector_risk": "HEADWIND",
+  "sector_sentiment_score": -0.64,
+  "sector_sentiment_label": "HEADWIND",
+  "sector_sentiment_articles_scored": 8,
+  "escalation_triggered": true,
+  "deep_search_backend": "serper",
+  "entity_verification": {
+    "verified_findings": 3,
+    "rejected_findings": 1,
+    "uncertain_findings": 0
+  },
+  "key_findings": [
+    {
+      "finding": "Active NCLT petition CP/2022/MB/1847 filed by Axis Bank against promoter Rajesh Kumar Mehta",
+      "source_url": "https://nclt.gov.in/...",
+      "confidence": "HIGH"
+    }
+  ]
+}
+```
+
+**Response while processing:** `{ "status": "processing" }`
+**Response if failed:** `{ "status": "failed", "error": "..." }`
 
 ---
 
