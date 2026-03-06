@@ -93,6 +93,12 @@ class ResearchState(TypedDict):
     verified_findings: List[Dict[str, Any]]
     rejected_findings: List[Dict[str, Any]]
     entity_verification_ran: bool
+    sector_sentiment_score: float
+    sector_sentiment_label: str
+    sector_sentiment_articles_scored: int
+    sector_sentiment_key_signals: List[str]
+    sector_sentiment_override: bool
+    sector_sentiment_source: str
     risk_signals: List[str]
     classification: Dict[str, Any] # Store the parsed JSON output from Claude
 
@@ -453,6 +459,149 @@ Return ONLY this JSON, nothing else:
         "entity_verification_ran": True
     }
 
+async def score_sector_sentiment(state: ResearchState) -> ResearchState:
+    logger.info("Node: score_sector_sentiment")
+    
+    # Collect sector/news-related search results from base searches
+    # Filter for results relevant to sector outlook, macro conditions, regulatory news
+    all_results = []
+    for category, results_list in state.get("search_results", {}).items():
+        all_results.extend(results_list)
+
+    news_texts = [
+        f"Title: {r.get('title', '')}\nSnippet: {r.get('snippet', r.get('content', ''))}\nURL: {r.get('url', '')}"
+        for r in all_results
+        if r.get('snippet', r.get('content', ''))
+    ]
+
+    if not news_texts:
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "default_neutral_no_results"
+        }
+
+    articles_text = "\n\n---\n\n".join(news_texts)
+
+    sentiment_prompt = f"""You are a financial sector sentiment analyst specialising in Indian corporate credit.
+
+Score the regulatory and macroeconomic sentiment for the following company's sector
+based on the search results below.
+
+COMPANY: {state['company_name']}
+INDUSTRY: {state.get('industry', 'Unknown')}
+
+SEARCH RESULTS:
+{articles_text}
+
+SCORING INSTRUCTIONS:
+1. Score each article individually on a scale of -1.0 to +1.0
+2. Return the weighted average as the final score
+3. Weight articles about the specific company more heavily than general sector news
+
+MANDATORY INDIAN REGULATORY SEVERITY MAPPINGS — these override sentiment analysis:
+The following events MUST result in a score of -1.0 regardless of context:
+- Enforcement Directorate (ED) investigation or raid
+- CBI FIR filed against company or promoter
+- NCLT petition admitted (company under insolvency)
+- SARFAESI action by a bank
+- RBI show-cause notice or penalty order
+- SEBI debarment order against promoter
+- GST department prosecution or arrest
+
+POSITIVE SIGNALS (score toward +1.0):
+- Government PLI scheme inclusion
+- Export order wins
+- Rating upgrade by CRISIL/ICRA/CARE
+- RBI approval for new business line
+- Strong sectoral tailwinds (policy support, demand growth)
+
+Return ONLY this JSON, nothing else:
+{{
+  "individual_scores": [
+    {{"title": "article title", "score": 0.0, "reason": "one sentence"}}
+  ],
+  "weighted_average": 0.0,
+  "sentiment_label": "HEADWIND" or "NEUTRAL" or "TAILWIND",
+  "key_signals_found": ["list of specific signals detected"],
+  "mandatory_override_triggered": false,
+  "override_reason": null
+}}
+
+Sentiment label mapping:
+- weighted_average < -0.3 → HEADWIND
+- -0.3 to +0.3 → NEUTRAL
+- > +0.3 → TAILWIND"""
+
+    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    if not client.api_key:
+        logger.warning("ANTHROPIC_API_KEY missing. Returning fallback sentiment.")
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "fallback_no_api_key"
+        }
+
+    try:
+        response = await client.messages.create(
+            model=CLAUDE_RESEARCH_AGENT_MODEL,
+            max_tokens=600,
+            messages=[{"role": "user", "content": sentiment_prompt}]
+        )
+        raw_output = response.content[0].text
+        
+        try:
+            if "```json" in raw_output:
+                json_str = raw_output.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_output:
+                json_str = raw_output.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = raw_output.strip()
+            parsed = json.loads(json_str)
+        except json.JSONDecodeError:
+            raise ValueError(f"Failed to parse Claude JSON output: {raw_output}")
+            
+        score = float(parsed.get("weighted_average", 0.0))
+        # Clamp to [-1.0, +1.0]
+        score = max(-1.0, min(1.0, score))
+        label = parsed.get("sentiment_label", "NEUTRAL")
+
+        articles_scored = len(parsed.get("individual_scores", []))
+        key_signals = parsed.get("key_signals_found", [])
+        override = parsed.get("mandatory_override_triggered", False)
+
+        logger.info(
+            f"Sector sentiment scored: {score:.2f} ({label}) "
+            f"from {articles_scored} articles. "
+            f"Override triggered: {override}"
+        )
+
+        return {
+            "sector_sentiment_score": score,
+            "sector_sentiment_label": label,
+            "sector_sentiment_articles_scored": articles_scored,
+            "sector_sentiment_key_signals": key_signals,
+            "sector_sentiment_override": override,
+            "sector_sentiment_source": "claude_indian_regulatory_mapping"
+        }
+
+    except Exception as e:
+        logger.warning(f"Sentiment scoring error: {e}. Defaulting to 0.0 NEUTRAL.")
+        return {
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "default_neutral_error"
+        }
+
 async def extract_risk_signals(state: ResearchState) -> ResearchState:
     logger.info("Node: extract_risk_signals")
     # A simple mock extraction for now.
@@ -479,17 +628,13 @@ async def classify_risks(state: ResearchState) -> ResearchState:
         return {"classification": {"error": "API key missing"}}
         
     # Combine all search text
-    combined_text = ""
-    for category, results in state.get("search_results", {}).items():
-        combined_text += f"\n--- {category.upper()} ---\n"
-        for r in results:
-            combined_text += f"Title: {r['title']}\nContent: {r['content']}\n"
-            
-    if "escalation_results" in state:
-        combined_text += f"\n--- ESCALATION RESULTS ---\n"
-        for r in state["escalation_results"]:
-             content = r.get('snippet', r.get('content', ''))
-             combined_text += f"Title: {r['title']}\nContent: {content}\n"
+    combined_text = "IMPORTANT: The following findings have been entity-verified — they are confirmed to refer to this specific company/promoter. Unverified name collision results have been excluded.\n\n"
+    for r_dict in state.get("verified_findings", []):
+        r = r_dict.get("result", {})
+        combined_text += f"Title: {r.get('title', '')}\nContent: {r.get('snippet', r.get('content', ''))}\n\n"
+        
+    rejected_count = len(state.get("rejected_findings", []))
+    combined_text += f"Note: {rejected_count} search results were excluded as name collision false positives (different entities with similar names).\n"
                  
     # Truncate to avoid massive token usage during testing
     combined_text = combined_text[:3000]
@@ -500,6 +645,10 @@ async def classify_risks(state: ResearchState) -> ResearchState:
 Company: {state['company_name']}
 Promoters: {', '.join(state['promoter_names'])}
 
+Sector Sentiment Score (Claude-scored, Indian regulatory mappings): {state.get('sector_sentiment_score', 0.0):.2f} ({state.get('sector_sentiment_label', 'NEUTRAL')})
+Key signals detected: {state.get('sector_sentiment_key_signals', [])}
+Mandatory override triggered: {state.get('sector_sentiment_override', False)}
+
 Respond ONLY with this JSON:
 {{
   "promoter_risk": "LOW" | "MEDIUM" | "HIGH",
@@ -509,7 +658,8 @@ Respond ONLY with this JSON:
   "sector_risk": "TAILWIND" | "NEUTRAL" | "HEADWIND",
   "sector_reason": "one line",
   "key_findings": ["finding 1", "finding 2"],
-  "sources": ["url1", "url2"]
+  "sources": ["url1", "url2"],
+  "sector_sentiment_score": {state.get('sector_sentiment_score', 0.0)}
 }}"""
 
     try:
@@ -577,6 +727,12 @@ class ResearchState(TypedDict):
     verified_findings: List[Dict[str, Any]]
     rejected_findings: List[Dict[str, Any]]
     entity_verification_ran: bool
+    sector_sentiment_score: float
+    sector_sentiment_label: str
+    sector_sentiment_articles_scored: int
+    sector_sentiment_key_signals: List[str]
+    sector_sentiment_override: bool
+    sector_sentiment_source: str
     risk_signals: List[str]
     classification: Dict[str, Any]
 
@@ -585,6 +741,7 @@ workflow.add_node("run_base_searches", make_tracked_node("run_base_searches", ru
 workflow.add_node("check_escalation", make_tracked_node("check_escalation", check_escalation))
 workflow.add_node("run_escalation_searches", make_tracked_node("run_escalation_searches", run_escalation_searches))
 workflow.add_node("verify_entity_match", make_tracked_node("verify_entity_match", verify_entity_match))
+workflow.add_node("score_sector_sentiment", make_tracked_node("score_sector_sentiment", score_sector_sentiment))
 workflow.add_node("extract_risk_signals", make_tracked_node("extract_risk_signals", extract_risk_signals))
 workflow.add_node("classify_risks", make_tracked_node("classify_risks", classify_risks))
 
@@ -592,7 +749,8 @@ workflow.set_entry_point("run_base_searches")
 workflow.add_edge("run_base_searches", "check_escalation")
 workflow.add_conditional_edges("check_escalation", should_escalate)
 workflow.add_edge("run_escalation_searches", "verify_entity_match")
-workflow.add_edge("verify_entity_match", "extract_risk_signals")
+workflow.add_edge("verify_entity_match", "score_sector_sentiment")
+workflow.add_edge("score_sector_sentiment", "extract_risk_signals")
 workflow.add_edge("extract_risk_signals", "classify_risks")
 workflow.add_edge("classify_risks", END)
 
@@ -619,6 +777,12 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "verified_findings": [],
             "rejected_findings": [],
             "entity_verification_ran": False,
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "",
             "cin": getattr(request, "cin", None),
             "risk_signals": [],
             "classification": {}
@@ -774,6 +938,12 @@ if __name__ == "__main__":
             "verified_findings": [],
             "rejected_findings": [],
             "entity_verification_ran": False,
+            "sector_sentiment_score": 0.0,
+            "sector_sentiment_label": "NEUTRAL",
+            "sector_sentiment_articles_scored": 0,
+            "sector_sentiment_key_signals": [],
+            "sector_sentiment_override": False,
+            "sector_sentiment_source": "",
             "cin": None,
             "risk_signals": [],
             "classification": {}
