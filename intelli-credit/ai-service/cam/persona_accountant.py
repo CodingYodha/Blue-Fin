@@ -150,7 +150,8 @@ RETURN YOUR RESPONSE EXACTLY IN THIS JSON FORMAT:
 async def run_accountant_persona(ctx: CAMContext) -> Dict[str, Any]:
     llm = ChatAnthropic(
         model_name="claude-3-5-sonnet-20240620",
-        temperature=0.0
+        temperature=0.0,
+        max_tokens=3000
     )
     
     prompt = build_accountant_prompt(ctx)

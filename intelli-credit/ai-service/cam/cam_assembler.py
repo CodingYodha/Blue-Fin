@@ -246,11 +246,13 @@ async def generate_cam_pipeline(job_id: str):
     
     ctx = await assemble_cam_context(job_id)
     
-    # 1. Forensic Accountant
-    acc_out = await run_accountant_persona(ctx)
+    import asyncio
     
-    # 2. Compliance Officer
-    comp_out = await run_compliance_persona(ctx)
+    # 1 & 2. Concurrent Accountant and Compliance Officer Runs
+    acc_out, comp_out = await asyncio.gather(
+        run_accountant_persona(ctx),
+        run_compliance_persona(ctx)
+    )
     
     # 3. Chief Risk Officer
     cro_out = await run_cro_persona(ctx, acc_out, comp_out)
