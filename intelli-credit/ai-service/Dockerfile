@@ -16,6 +16,7 @@ RUN apt-get update && \
         git \
         libgl1 \
         libglib2.0-0 \
+        libreoffice \
     && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*

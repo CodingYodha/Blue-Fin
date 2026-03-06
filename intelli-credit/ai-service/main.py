@@ -39,6 +39,8 @@ from rag.routes import router as rag_router
 from agents.routes import router as research_agent_router
 from ml_core.model_loader import load_artifacts
 from ml_core.routes import router as scoring_router
+from ml_core.routes import router as scoring_router
+from cam.routes import router as cam_router
 
 load_dotenv()
 
@@ -120,6 +122,12 @@ app.include_router(research_agent_router)
 
 # Include Scoring router
 app.include_router(scoring_router)
+
+# Include ML Scoring router (V11+)
+app.include_router(scoring_router)
+
+# Include CAM Generation and Officer Notes router (V11+)
+app.include_router(cam_router)
 
 # Shared volume base path (Docker mount)
 BASE_PATH = Path("/tmp/intelli-credit")
