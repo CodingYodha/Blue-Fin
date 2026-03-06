@@ -32,6 +32,8 @@ from .graph_writer import write_entity_graph
 from .fraud_detector import run_all_fraud_checks
 from .graph_exporter import export_graph_for_ui
 
+from utils import validate_job_id
+
 logger = logging.getLogger("entity_graph.routes")
 
 # Shared volume base path
@@ -190,7 +192,7 @@ async def _build_graph_pipeline(
         error_file = _BASE_PATH / job_id / "entity_graph_error.json"
         error_file.parent.mkdir(parents=True, exist_ok=True)
         error_file.write_text(
-            json.dumps({"status": "failed", "error": str(e)}),
+            json.dumps({"status": "failed", "error": "Graph build failed"}),
             encoding="utf-8",
         )
 
@@ -228,6 +230,7 @@ async def get_entity_graph(job_id: str):
     Return the graph export JSON for the frontend force-directed visualization.
     Reads from /tmp/intelli-credit/{job_id}/entity_graph.json.
     """
+    validate_job_id(job_id)
     graph_file = _BASE_PATH / job_id / "entity_graph.json"
     error_file = _BASE_PATH / job_id / "entity_graph_error.json"
 
@@ -271,7 +274,7 @@ async def get_entity_graph(job_id: str):
         return GraphStatusResponse(
             status="failed",
             job_id=job_id,
-            error=str(e),
+            error="Failed to read graph export",
         )
 
 
@@ -281,6 +284,7 @@ async def get_fraud_flags(job_id: str):
     Return fraud detection results for the ML scoring pipeline and UI dashboard.
     Reads from /tmp/intelli-credit/{job_id}/entity_fraud_flags.json.
     """
+    validate_job_id(job_id)
     fraud_file = _BASE_PATH / job_id / "entity_fraud_flags.json"
 
     if not fraud_file.exists():

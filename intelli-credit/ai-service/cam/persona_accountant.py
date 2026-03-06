@@ -188,7 +188,7 @@ async def run_accountant_persona(ctx: CAMContext) -> Dict[str, Any]:
         return {
             "section": "financial_assessment",
             "persona": "forensic_accountant",
-            "content": f"Forensic accounting generation failed due to system error: {e}",
+            "content": "Forensic accounting generation failed due to a system error.",
             "source_citations": [],
             "confidence_flags": [],
             "key_financial_risks": ["Error blocked evaluation"]

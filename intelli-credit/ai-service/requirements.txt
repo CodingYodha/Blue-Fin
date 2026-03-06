@@ -36,7 +36,6 @@ qdrant-client>=1.9.0
 # Graph DB (Entity Graph — Neo4j)
 neo4j>=5.0.0
 
-<<<<<<< HEAD
 # ML Inference Pipeline
 joblib
 pandas
@@ -44,7 +43,9 @@ scikit-learn
 lightgbm
 shap>=0.44.0
 duckdb>=0.10.0
-=======
+
 # Document processing
 python-docx>=1.1.0
->>>>>>> rag
+
+# Supabase
+supabase

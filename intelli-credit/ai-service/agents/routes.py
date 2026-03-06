@@ -12,6 +12,8 @@ from .research_agent import (
 )
 from .schemas import RunAgentRequest
 
+from utils import validate_job_id
+
 router = APIRouter(prefix="/api/v1/research-agent", tags=["Research Agent"])
 
 BASE_PATH = Path("/tmp/intelli-credit")
@@ -23,6 +25,7 @@ class ResearchAgentRunResponse(BaseModel):
 
 @router.post("/run", response_model=ResearchAgentRunResponse)
 async def run_research_agent(request: RunAgentRequest, background_tasks: BackgroundTasks):
+    validate_job_id(request.job_id)
     job_dir = BASE_PATH / request.job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     
@@ -78,6 +81,7 @@ async def run_research_agent(request: RunAgentRequest, background_tasks: Backgro
 
 @router.get("/status/{job_id}")
 async def get_research_status(job_id: str):
+    validate_job_id(job_id)
     summary_file = BASE_PATH / job_id / "research_agent_summary.json"
     
     if summary_file.exists():
@@ -85,7 +89,7 @@ async def get_research_status(job_id: str):
             raw = summary_file.read_text(encoding="utf-8")
             return json.loads(raw)
         except Exception as e:
-            return {"status": "failed", "error": f"Failed to read summary: {str(e)}"}
+            return {"status": "failed", "error": "Failed to read summary"}
             
     # Check in-memory jobs as fallback or if still processing
     if job_id in jobs:

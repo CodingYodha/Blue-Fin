@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Optional
 
 from ml_core.model_loader import get_sector_config
 
+from utils import validate_job_id
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -129,6 +131,7 @@ def _cf(fin_dict: dict, key: str, period: str = None) -> dict:
             return default_resp
 
 async def assemble_cam_context(job_id: str) -> CAMContext:
+    validate_job_id(job_id)
     base = f"/tmp/intelli-credit/{job_id}"
 
     scoring  = _safe_load(os.path.join(base, "scoring_result.json"))

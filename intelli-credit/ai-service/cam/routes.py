@@ -8,6 +8,8 @@ from supabase import create_client, Client
 
 from .officer_notes import process_officer_notes, OfficerNotesResult
 
+from utils import validate_job_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/cam", tags=["CAM Generator"])
@@ -38,6 +40,7 @@ async def post_officer_notes(request: OfficerNotesRequest):
     Accepts Credit Officer field visit notes.
     Runs immediately through injection detection & scoring adjustments.
     """
+    validate_job_id(request.job_id)
     job_dir = Path(f"/tmp/intelli-credit/{request.job_id}")
     scoring_file = job_dir / "scoring_result.json"
     
@@ -64,7 +67,7 @@ async def post_officer_notes(request: OfficerNotesRequest):
         
     except Exception as e:
         logger.error(f"Error processing officer notes: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to process officer notes.")
 
 class CAMJobRequest(BaseModel):
     job_id: str
@@ -83,6 +86,7 @@ async def regenerate_cam_document(request: CAMJobRequest, background_tasks: Back
 
 @router.get("/result/{job_id}")
 async def fetch_cam_result(job_id: str):
+    validate_job_id(job_id)
     draft_path = Path(f"/tmp/intelli-credit/{job_id}/cam_draft.json")
     if not draft_path.exists():
         return {"status": "processing", "job_id": job_id}
@@ -107,6 +111,7 @@ from fastapi.responses import FileResponse
 
 @router.get("/download/{job_id}/{format}")
 async def fetch_cam_downloads(job_id: str, format: str):
+    validate_job_id(job_id)
     format = format.lower()
     if format not in ["docx", "pdf"]:
         raise HTTPException(status_code=400, detail="Valid formats are 'docx' or 'pdf'")

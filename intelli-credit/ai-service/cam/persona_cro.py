@@ -242,7 +242,7 @@ async def run_cro_persona(
         return {
             "section": "cro_recommendation",
             "persona": "chief_risk_officer",
-            "content": f"CRO recommendation generation failed due to system error: {e}",
+            "content": "CRO recommendation generation failed due to a system error.",
             "final_decision": "ERROR",
             "ml_decision": ctx.ml_decision,
             "override_applied": False,

@@ -10,6 +10,8 @@ from .layer1_scorer import compute_layer1_score
 from .layer2_scorer import compute_layer2_score
 from .score_combiner import combine_scores, make_decision, run_stress_tests
 
+from utils import validate_job_id
+
 logger = logging.getLogger(__name__)
 
 class ScoringResult(BaseModel):
@@ -43,6 +45,7 @@ class ScoringResult(BaseModel):
     scored_at: str
 
 async def run_full_scoring(job_id: str) -> ScoringResult:
+    validate_job_id(job_id)
     artifacts = load_artifacts()
 
     # Step 1: Assemble features from all upstream sources

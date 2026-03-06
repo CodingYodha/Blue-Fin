@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .scorer import run_full_scoring
 
+from utils import validate_job_id
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/scoring", tags=["ML Scoring"])
 
@@ -21,6 +23,7 @@ class ScoringRunResponse(BaseModel):
     message: str
 
 def get_job_dir(job_id: str) -> Path:
+    validate_job_id(job_id)
     return BASE_PATH / job_id
 
 async def execute_background_scoring(job_id: str):
@@ -33,7 +36,7 @@ async def execute_background_scoring(job_id: str):
         # Could write an error state file here if needed:
         error_path = get_job_dir(job_id) / "scoring_error.json"
         with open(error_path, "w") as f:
-            json.dump({"job_id": job_id, "error": str(e), "status": "failed"}, f)
+            json.dump({"job_id": job_id, "error": "Scoring pipeline failed", "status": "failed"}, f)
 
 @router.post("/run", response_model=ScoringRunResponse)
 async def run_scoring(request: ScoringRunRequest, background_tasks: BackgroundTasks):

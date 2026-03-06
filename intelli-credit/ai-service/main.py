@@ -9,6 +9,7 @@ Endpoints:
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,6 +17,8 @@ import fitz  # noqa: F401 — ensure PyMuPDF is importable at startup
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from utils import validate_job_id
 
 from deep_learning import (
     process_document,
@@ -38,7 +41,6 @@ from rag.qdrant_client import close_client as close_qdrant
 from rag.routes import router as rag_router
 from agents.routes import router as research_agent_router
 from ml_core.model_loader import load_artifacts
-from ml_core.routes import router as scoring_router
 from ml_core.routes import router as scoring_router
 from cam.routes import router as cam_router
 
@@ -67,6 +69,15 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting AI Service...")
+
+    # Validate required API keys / environment variables
+    required_env_vars = ["ANTHROPIC_API_KEY"]
+    for var in required_env_vars:
+        val = os.environ.get(var, "")
+        if not val:
+            logger.error(f"Required environment variable {var} is not set or empty")
+            raise RuntimeError(f"Missing required environment variable: {var}")
+
     try:
         create_constraints()
         logger.info("Neo4j constraints applied at startup")
@@ -106,7 +117,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -121,9 +132,6 @@ app.include_router(rag_router)
 app.include_router(research_agent_router)
 
 # Include Scoring router
-app.include_router(scoring_router)
-
-# Include ML Scoring router (V11+)
 app.include_router(scoring_router)
 
 # Include CAM Generation and Officer Notes router (V11+)
@@ -192,6 +200,7 @@ async def get_status(job_id: str):
     Poll the status of a processing job. Returns the full result
     JSON once processing is complete, or a processing status if still running.
     """
+    validate_job_id(job_id)
     output_file = BASE_PATH / job_id / "ocr_output.json"
 
     if not output_file.exists():
@@ -214,5 +223,5 @@ async def get_status(job_id: str):
         return JobStatusResponse(
             job_id=job_id,
             status="failed",
-            error=str(e),
+            error="Failed to read processing results",
         )

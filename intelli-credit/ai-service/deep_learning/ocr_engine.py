@@ -83,6 +83,9 @@ def _load_model():
     logger.info(f"Loading DeepSeek-VL2-tiny from {model_path} (4-bit, Unsloth)...")
     load_start = time.time()
 
+    # SECURITY NOTE: trust_remote_code=True is required for DeepSeek-VL2's custom
+    # model architecture. Only use with locally downloaded, verified model weights.
+    # Never point DEEPSEEK_MODEL_PATH to an untrusted or user-controlled directory.
     _model, _tokenizer = FastVisionModel.from_pretrained(
         model_path,
         load_in_4bit=True,

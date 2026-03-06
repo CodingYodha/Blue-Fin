@@ -202,7 +202,7 @@ async def run_compliance_persona(ctx: CAMContext) -> Dict[str, Any]:
         return {
             "section": "compliance_assessment",
             "persona": "compliance_officer",
-            "content": f"Compliance assessment generation failed due to system error: {e}",
+            "content": "Compliance assessment generation failed due to a system error.",
             "promoter_integrity_verdict": "ERROR",
             "active_legal_proceedings": [],
             "excluded_findings_count": len(ctx.rejected_findings),

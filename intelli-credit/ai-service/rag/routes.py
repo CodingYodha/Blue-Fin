@@ -28,6 +28,8 @@ from .extractor import run_full_extraction
 from .retriever import retrieve_chunks
 from .schemas import IngestRequest, IngestResult, QueryRequest, RetrievedChunk
 
+from utils import validate_job_id
+
 logger = logging.getLogger("rag.routes")
 
 # Shared volume base path
@@ -101,7 +103,7 @@ async def _run_ingest_background(
         error_summary = {
             "status": "failed",
             "job_id": job_id,
-            "error": str(e),
+            "error": "Ingestion failed",
         }
         output_dir = _BASE_PATH / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +125,7 @@ async def _run_extract_background(job_id: str):
         error_result = {
             "status": "failed",
             "job_id": job_id,
-            "error": str(e),
+            "error": "Extraction failed",
         }
         output_dir = _BASE_PATH / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +172,7 @@ async def get_ingest_status(job_id: str):
     Reads rag_ingest_summary.json written by the background ingest task.
     Returns status="processing" while the task is still running.
     """
+    validate_job_id(job_id)
     summary_file = _BASE_PATH / job_id / "rag_ingest_summary.json"
 
     if not summary_file.exists():
@@ -180,7 +183,7 @@ async def get_ingest_status(job_id: str):
         return data
     except Exception as e:
         logger.error(f"[{job_id}] Failed to read ingest summary: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to read ingest summary: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read ingest summary")
 
 
 @router.post("/extract")
@@ -214,6 +217,7 @@ async def get_extraction_result(job_id: str):
     The ML scoring pipeline reads this. Returns the contents of
     rag_extraction.json written by the extract background task.
     """
+    validate_job_id(job_id)
     extraction_file = _BASE_PATH / job_id / "rag_extraction.json"
 
     if not extraction_file.exists():
@@ -224,7 +228,7 @@ async def get_extraction_result(job_id: str):
         return data
     except Exception as e:
         logger.error(f"[{job_id}] Failed to read extraction result: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to read extraction result: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read extraction result")
 
 
 @router.post("/query")
@@ -264,7 +268,7 @@ async def semantic_query(request: QueryRequest):
 
     except Exception as e:
         logger.error(f"Semantic query failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Semantic query failed: {e}")
+        raise HTTPException(status_code=500, detail="Semantic query failed")
 
 
 @router.delete("/chunks/{job_id}")
@@ -275,6 +279,7 @@ async def delete_chunks(job_id: str):
     Used for cleanup or re-processing. Also removes the ingest summary
     and extraction result files.
     """
+    validate_job_id(job_id)
     try:
         points_deleted = await delete_job_chunks(job_id)
 

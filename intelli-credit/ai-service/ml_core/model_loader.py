@@ -2,6 +2,7 @@ import joblib
 import json
 import os
 import logging
+import hashlib
 from dataclasses import dataclass
 import pandas as pd
 
@@ -36,6 +37,17 @@ class MLArtifacts:
 
 _artifacts: MLArtifacts | None = None
 
+def _safe_load_model(filepath: str) -> object:
+    """Load a joblib model file with path validation."""
+    real_path = os.path.realpath(filepath)
+    real_model_dir = os.path.realpath(MODEL_DIR)
+    if not real_path.startswith(real_model_dir + os.sep) and real_path != real_model_dir:
+        raise ValueError(f"Model path escapes MODEL_DIR: {filepath}")
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Model file not found: {filepath}")
+    return joblib.load(filepath)
+
+
 def load_artifacts() -> MLArtifacts:
     global _artifacts
     if _artifacts is not None:
@@ -44,16 +56,16 @@ def load_artifacts() -> MLArtifacts:
     logger.info(f"Loading ML artifacts from {MODEL_DIR}...")
     
     # Load primary models
-    model_1 = joblib.load(os.path.join(MODEL_DIR, "model_1_financial_health.pkl"))
-    model_2 = joblib.load(os.path.join(MODEL_DIR, "model_2_credit_behaviour.pkl"))
-    model_3 = joblib.load(os.path.join(MODEL_DIR, "model_3_external_risk.pkl"))
-    model_4 = joblib.load(os.path.join(MODEL_DIR, "model_4_text_signals.pkl"))
-    meta_model = joblib.load(os.path.join(MODEL_DIR, "meta_model_aggregator.pkl"))
+    model_1 = _safe_load_model(os.path.join(MODEL_DIR, "model_1_financial_health.pkl"))
+    model_2 = _safe_load_model(os.path.join(MODEL_DIR, "model_2_credit_behaviour.pkl"))
+    model_3 = _safe_load_model(os.path.join(MODEL_DIR, "model_3_external_risk.pkl"))
+    model_4 = _safe_load_model(os.path.join(MODEL_DIR, "model_4_text_signals.pkl"))
+    meta_model = _safe_load_model(os.path.join(MODEL_DIR, "meta_model_aggregator.pkl"))
     
     # Load encoders
-    encoder_sector = joblib.load(os.path.join(MODEL_DIR, "encoder_sector.pkl"))
-    encoder_rating = joblib.load(os.path.join(MODEL_DIR, "encoder_rating.pkl"))
-    encoder_regulatory = joblib.load(os.path.join(MODEL_DIR, "encoder_regulatory.pkl"))
+    encoder_sector = _safe_load_model(os.path.join(MODEL_DIR, "encoder_sector.pkl"))
+    encoder_rating = _safe_load_model(os.path.join(MODEL_DIR, "encoder_rating.pkl"))
+    encoder_regulatory = _safe_load_model(os.path.join(MODEL_DIR, "encoder_regulatory.pkl"))
     
     # Load configs
     with open(os.path.join(MODEL_DIR, "industry_config.json"), "r") as f:
@@ -71,7 +83,7 @@ def load_artifacts() -> MLArtifacts:
     # Load scalers with graceful fallback
     def load_optional(path):
         if os.path.exists(path):
-            return joblib.load(path)
+            return _safe_load_model(path)
         logger.warning(f"Optional artifact not found: {path} — will use fallback")
         return None
 

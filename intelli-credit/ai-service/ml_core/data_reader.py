@@ -6,6 +6,8 @@ import json
 import logging
 from dataclasses import dataclass
 
+from utils import validate_job_id
+
 logger = logging.getLogger(__name__)
 
 DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
@@ -52,7 +54,7 @@ async def read_from_databricks(job_id: str) -> dict:
     """
     Queries Databricks SQL Warehouse for Go service fraud features.
     """
-    sql = f"""
+    sql = """
     SELECT
         gst_filing_delay_days,
         gst_vs_bank_variance_pct,
@@ -71,7 +73,7 @@ async def read_from_databricks(job_id: str) -> dict:
         supply_chain_risk_score,
         regulatory_action_flag
     FROM intelli_credit.fraud_features
-    WHERE job_id = '{job_id}'
+    WHERE job_id = :job_id
     LIMIT 1
     """
 
@@ -82,7 +84,8 @@ async def read_from_databricks(job_id: str) -> dict:
     payload = {
         "warehouse_id": DATABRICKS_SQL_WAREHOUSE,
         "statement": sql,
-        "wait_timeout": "7s"
+        "wait_timeout": "7s",
+        "parameters": [{"name": "job_id", "value": job_id, "type": "STRING"}]
     }
 
     async with httpx.AsyncClient(timeout=DATABRICKS_TIMEOUT) as client:
@@ -113,7 +116,8 @@ def read_from_duckdb(job_id: str) -> dict:
 
     conn = duckdb.connect(":memory:")
     result = conn.execute(
-        f"SELECT * FROM read_parquet('{parquet_path}') LIMIT 1"
+        "SELECT * FROM read_parquet(?) LIMIT 1",
+        [parquet_path]
     ).fetchdf()
     return result.iloc[0].to_dict()
 
@@ -122,6 +126,7 @@ async def read_go_features(job_id: str) -> GoFeatures:
     Try Databricks first. On timeout or error, fall back to DuckDB.
     Log which backend was used.
     """
+    validate_job_id(job_id)
     try:
         data = await read_from_databricks(job_id)
         logger.info(f"Go features read from Databricks for {job_id}")
