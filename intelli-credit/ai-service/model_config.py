@@ -28,7 +28,7 @@ CLAUDE_RESEARCH_AGENT_MODEL = "claude-haiku-4-5-20251001"
 
 # Used in: rag/extractor.py (upcoming) → Claude RAG extraction calls
 # Purpose: Takes retrieved chunks + prompt, returns structured JSON for LightGBM features
-CLAUDE_RAG_EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_RAG_EXTRACTION_MODEL = "claude-sonnet-4-20250514"
 
 
 # ---------------------------------------------------------------------------
