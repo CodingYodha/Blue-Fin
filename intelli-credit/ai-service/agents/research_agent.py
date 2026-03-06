@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
 from model_config import CLAUDE_RESEARCH_AGENT_MODEL
+import search_backends
 
 load_dotenv()
 
@@ -82,7 +83,10 @@ class ResearchState(TypedDict):
     industry: str
     search_results: Dict[str, List[Any]] # Any because we'll convert SearchResult to dict
     escalation_triggered: bool
-    escalation_results: Dict[str, List[Any]]
+    triggered_keywords: List[str]
+    escalation_results: List[Any]
+    deep_search_backend: str
+    escalation_query_count: int
     risk_signals: List[str]
     classification: Dict[str, Any] # Store the parsed JSON output from Claude
 
@@ -213,20 +217,21 @@ async def check_escalation(state: ResearchState) -> ResearchState:
     keywords = ["fraud", "NCLT", "NPA", "default", "arrested", "ED", "CBI", "Enforcement Directorate", "money laundering"]
     keywords_lower = [k.lower() for k in keywords]
     
-    triggered = False
+    triggered_keywords = []
     
     # Scan all base search results for keywords
     for category, results_list in state["search_results"].items():
         for result in results_list:
             text_to_check = f"{result['title']} {result['content']}".lower()
-            if any(keyword in text_to_check for keyword in keywords_lower):
-                logger.warning(f"Escalation triggered by keyword match in {category}: {result['title']}")
-                triggered = True
-                break
-        if triggered:
-            break
-            
-    return {"escalation_triggered": triggered}
+            for keyword in keywords_lower:
+                if keyword in text_to_check and keyword not in triggered_keywords:
+                    logger.warning(f"Escalation triggered by keyword match in {category}: {result['title']}")
+                    triggered_keywords.append(keyword)
+                    
+    return {
+        "escalation_triggered": len(triggered_keywords) > 0,
+        "triggered_keywords": triggered_keywords
+    }
 
 def should_escalate(state: ResearchState) -> str:
     if state.get("escalation_triggered", False):
@@ -235,34 +240,30 @@ def should_escalate(state: ResearchState) -> str:
 
 async def run_escalation_searches(state: ResearchState) -> ResearchState:
     logger.info("Node: run_escalation_searches")
-    tool = TavilySearchTool()
-    
-    primary_promoter = state["promoter_names"][0] if state["promoter_names"] else "Unknown Promoter"
     company_name = state["company_name"]
+    promoter_names = state["promoter_names"]
+    triggered_keywords = state.get("triggered_keywords", [])
     
-    def sanitize(text: str) -> str:
-        return re.sub(r'[^a-zA-Z0-9\s]', '', text).strip()
+    queries = search_backends.build_escalation_queries(company_name, promoter_names, triggered_keywords)
+    
+    all_results = []
+    final_backend = ""
+    query_count = len(queries)
+    
+    for query in queries:
+        result = await search_backends.deep_search(query, num_results=5)
+        final_backend = result.backend
+        all_results.extend([r.model_dump() for r in result.results])
+        if "duckduckgo" in final_backend:
+            await asyncio.sleep(1)
+            
+    logger.info(f"Deep search complete: {query_count} queries via {final_backend}. Found {len(all_results)} results.")
         
-    s_company = sanitize(company_name)
-    s_promoter = sanitize(primary_promoter)
-    
-    queries = {
-        "nclt_cases": f"{s_promoter} NCLT case number status site:nclt.gov.in OR site:ecourts.gov.in",
-        "ed_attachments": f"{s_company} enforcement directorate ED attachment"
+    return {
+        "escalation_results": all_results,
+        "deep_search_backend": final_backend,
+        "escalation_query_count": query_count
     }
-    
-    tasks = [
-        tool.search_with_retry(query, retries=2, max_results=3) 
-        for query in queries.values()
-    ]
-    
-    results_list = await asyncio.gather(*tasks)
-    
-    dict_results = {}
-    for key, r_list in zip(queries.keys(), results_list):
-        dict_results[key] = [r.model_dump() for r in r_list]
-        
-    return {"escalation_results": dict_results}
 
 async def extract_risk_signals(state: ResearchState) -> ResearchState:
     logger.info("Node: extract_risk_signals")
@@ -270,10 +271,8 @@ async def extract_risk_signals(state: ResearchState) -> ResearchState:
     signals = []
     if state.get("escalation_triggered", False):
         signals.append("Automated escalation was triggered due to negative keywords found in base search.")
-        if "escalation_results" in state:
-            for cat, results in state["escalation_results"].items():
-                if results:
-                    signals.append(f"Found deep records in {cat}.")
+        if state.get("escalation_results"):
+            signals.append(f"Found {len(state['escalation_results'])} deep records from escalating searches.")
             
     if not signals:
         signals.append("No immediate red flags detected.")
@@ -296,10 +295,10 @@ async def classify_risks(state: ResearchState) -> ResearchState:
             combined_text += f"Title: {r['title']}\nContent: {r['content']}\n"
             
     if "escalation_results" in state:
-        for category, results in state["escalation_results"].items():
-            combined_text += f"\n--- ESCALATION: {category.upper()} ---\n"
-            for r in results:
-                 combined_text += f"Title: {r['title']}\nContent: {r['content']}\n"
+        combined_text += f"\n--- ESCALATION RESULTS ---\n"
+        for r in state["escalation_results"]:
+             content = r.get('snippet', r.get('content', ''))
+             combined_text += f"Title: {r['title']}\nContent: {content}\n"
                  
     # Truncate to avoid massive token usage during testing
     combined_text = combined_text[:3000]
@@ -379,7 +378,10 @@ class ResearchState(TypedDict):
     industry: str
     search_results: Dict[str, List[Any]]
     escalation_triggered: bool
-    escalation_results: Dict[str, List[Any]]
+    triggered_keywords: List[str]
+    escalation_results: List[Any]
+    deep_search_backend: str
+    escalation_query_count: int
     risk_signals: List[str]
     classification: Dict[str, Any]
 
@@ -413,7 +415,10 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "industry": request.industry,
             "search_results": {},
             "escalation_triggered": False,
-            "escalation_results": {},
+            "triggered_keywords": [],
+            "escalation_results": [],
+            "deep_search_backend": "",
+            "escalation_query_count": 0,
             "risk_signals": [],
             "classification": {}
         }
@@ -561,7 +566,10 @@ if __name__ == "__main__":
             "industry": industry,
             "search_results": {},
             "escalation_triggered": False,
-            "escalation_results": {},
+            "triggered_keywords": [],
+            "escalation_results": [],
+            "deep_search_backend": "",
+            "escalation_query_count": 0,
             "risk_signals": [],
             "classification": {}
         }
