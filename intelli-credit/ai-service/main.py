@@ -4,7 +4,7 @@ Intelli-Credit AI Service — FastAPI Application.
 Endpoints:
   POST /api/v1/process-document   → accepts a document processing job
   GET  /api/v1/status/{job_id}    → polls job status / retrieves result
-  GET  /health                    → liveness probe (includes Neo4j status)
+  GET  /health                    → liveness probe (includes Neo4j + Qdrant status)
 """
 
 import json
@@ -30,6 +30,11 @@ from entity_graph import (
     neo4j_health_check,
 )
 from entity_graph.routes import router as entity_graph_router
+from rag import (
+    ensure_collection_exists,
+    qdrant_health_check,
+)
+from rag.qdrant_client import close_client as close_qdrant
 
 load_dotenv()
 
@@ -51,8 +56,8 @@ logger = logging.getLogger("ai-service")
 async def lifespan(app: FastAPI):
     """
     FastAPI lifespan context manager.
-    Startup: apply Neo4j constraints.
-    Shutdown: close Neo4j driver.
+    Startup: apply Neo4j constraints, ensure Qdrant collection.
+    Shutdown: close Neo4j driver, close Qdrant client.
     """
     # Startup
     logger.info("Starting AI Service...")
@@ -62,11 +67,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Neo4j startup failed (will retry on first request): {e}")
 
+    try:
+        ensure_collection_exists()
+        logger.info("Qdrant collection verified at startup")
+    except Exception as e:
+        logger.warning(f"Qdrant startup failed (will retry on first request): {e}")
+
     yield
 
     # Shutdown
     logger.info("Shutting down AI Service...")
     close_driver()
+    close_qdrant()
 
 
 # ---------------------------------------------------------------------------
@@ -100,13 +112,16 @@ BASE_PATH = Path("/tmp/intelli-credit")
 
 @app.get("/health")
 async def health_check():
-    """Liveness probe — includes Neo4j connectivity status."""
+    """Liveness probe — includes Neo4j and Qdrant connectivity status."""
     neo4j_ok = neo4j_health_check()
+    qdrant_ok = qdrant_health_check()
+    all_ok = neo4j_ok and qdrant_ok
     return {
-        "status": "ok" if neo4j_ok else "degraded",
+        "status": "ok" if all_ok else "degraded",
         "services": {
             "ai_service": True,
             "neo4j": neo4j_ok,
+            "qdrant": qdrant_ok,
         },
     }
 
