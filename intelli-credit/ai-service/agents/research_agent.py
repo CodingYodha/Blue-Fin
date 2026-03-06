@@ -16,6 +16,7 @@ from langgraph.graph import StateGraph, END
 import json
 from model_config import CLAUDE_RESEARCH_AGENT_MODEL
 import search_backends
+from thefuzz import fuzz
 
 load_dotenv()
 
@@ -287,12 +288,68 @@ async def verify_entity_match(state: ResearchState) -> ResearchState:
         all_results.extend(results_list)
     all_results.extend(state.get("escalation_results", []))
 
-    LEGAL_KEYWORDS = ["NCLT", "court", "petition", "FIR", "arrested", "ED",
-                      "fraud", "default", "NPA", "SEBI", "CBI", "DRT", "SARFAESI"]
+    LEGAL_KEYWORDS = [
+        # Insolvency & Courts
+        "NCLT", "NCLAT", "IBC", "insolvency", "liquidation", "resolution professional",
+        "corporate insolvency resolution process", "CIRP", "moratorium", "RP appointed",
+        "winding up", "DRT", "DRAT", "debt recovery tribunal", "SARFAESI",
+        "possession notice", "auction notice", "symbolic possession",
+
+        # Law Enforcement
+        "ED", "Enforcement Directorate", "FEMA", "PMLA", "money laundering",
+        "attachment order", "provisional attachment", "CBI", "FIR", "chargesheet",
+        "arrested", "custody", "bail", "conviction", "lookout notice", "LOC issued",
+        "SFIO", "Serious Fraud Investigation Office", "EOW", "Economic Offences Wing",
+
+        # Tax & Regulatory
+        "income tax raid", "IT raid", "tax evasion", "GST evasion", "GST fraud",
+        "fake invoice", "ITC fraud", "benami", "Benami Transactions",
+        "GSTN suspended", "GST registration cancelled",
+
+        # Capital Markets
+        "SEBI", "debarred", "debarment", "insider trading", "market manipulation",
+        "consent order", "SEBI penalty", "NSE action", "BSE action",
+
+        # Banking & Credit
+        "NPA", "non-performing asset", "wilful defaulter", "wilful default",
+        "RBI penalty", "RBI action", "prompt corrective action", "PCA",
+        "loan restructuring", "one time settlement", "OTS", "debt restructuring",
+        "account fraud", "SMA", "special mention account",
+
+        # General Fraud
+        "fraud", "cheating", "forgery", "misappropriation", "embezzlement",
+        "diversion of funds", "siphoning", "shell company", "hawala",
+        "round tripping", "circular trading",
+
+        # MCA / Corporate
+        "director disqualified", "DIN deactivated", "strike off", "struck off",
+        "MCA notice", "ROC notice", "compounding", "Section 138",    # cheque bounce
+        "Section 420",     # IPC cheating
+        "Section 406",     # criminal breach of trust
+    ]
+
+    def is_legal_result(text: str, keywords: list, threshold: int = 80) -> bool:
+        text_lower = text.lower()
+        words = text_lower.split()
+        for kw in keywords:
+            kw_lower = kw.lower()
+            # Exact substring check first (fast path)
+            if kw_lower in text_lower:
+                return True
+            # Fuzzy check against individual words and bigrams (catches misspellings)
+            for i, word in enumerate(words):
+                if fuzz.ratio(kw_lower, word) >= threshold:
+                    return True
+                # Check bigrams (e.g. "Enforcement Directorate" as two words)
+                if i < len(words) - 1:
+                    bigram = f"{word} {words[i+1]}"
+                    if fuzz.ratio(kw_lower, bigram) >= threshold:
+                        return True
+        return False
 
     legal_results = [
         r for r in all_results
-        if any(kw.lower() in (r.get("title", "") + " " + r.get("snippet", r.get("content", ""))).lower() for kw in LEGAL_KEYWORDS)
+        if is_legal_result(r.get("title", "") + " " + r.get("snippet", r.get("content", "")), LEGAL_KEYWORDS, threshold=80)
     ]
 
     if not legal_results:
