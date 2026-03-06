@@ -67,7 +67,11 @@ export default function HistoryPage() {
     setIsLoading(true);
     listJobs()
       .then((data) => {
-        setJobs(Array.isArray(data) ? data : data?.jobs || []);
+        const raw = Array.isArray(data) ? data : data?.jobs || [];
+        const sorted = [...raw].sort(
+          (a, b) => new Date(b.created_at) - new Date(a.created_at),
+        );
+        setJobs(sorted);
         setIsLoading(false);
       })
       .catch((err) => {
