@@ -29,6 +29,7 @@ from entity_graph import (
     close_driver,
     neo4j_health_check,
 )
+from entity_graph.routes import router as entity_graph_router
 
 load_dotenv()
 
@@ -85,6 +86,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include entity graph router
+app.include_router(entity_graph_router)
 
 # Shared volume base path (Docker mount)
 BASE_PATH = Path("/tmp/intelli-credit")
