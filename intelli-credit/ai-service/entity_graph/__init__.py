@@ -23,12 +23,15 @@ from .neo4j_client import (
     APPLIED_FOR,
     FLAGGED_IN,
 )
+from .graph_writer import write_entity_graph, WriteResult
 
 __all__ = [
     "get_driver",
     "close_driver",
     "create_constraints",
     "neo4j_health_check",
+    "write_entity_graph",
+    "WriteResult",
     "PERSON",
     "COMPANY",
     "LOAN",
