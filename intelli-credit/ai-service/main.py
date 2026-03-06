@@ -4,11 +4,12 @@ Intelli-Credit AI Service — FastAPI Application.
 Endpoints:
   POST /api/v1/process-document   → accepts a document processing job
   GET  /api/v1/status/{job_id}    → polls job status / retrieves result
-  GET  /health                    → liveness probe
+  GET  /health                    → liveness probe (includes Neo4j status)
 """
 
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import fitz  # noqa: F401 — ensure PyMuPDF is importable at startup
@@ -23,6 +24,11 @@ from deep_learning import (
     ProcessDocumentRequest,
     ProcessDocumentResponse,
 )
+from entity_graph import (
+    create_constraints,
+    close_driver,
+    neo4j_health_check,
+)
 
 load_dotenv()
 
@@ -35,13 +41,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ai-service")
 
+
+# ---------------------------------------------------------------------------
+# Lifespan — startup / shutdown hooks
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan context manager.
+    Startup: apply Neo4j constraints.
+    Shutdown: close Neo4j driver.
+    """
+    # Startup
+    logger.info("Starting AI Service...")
+    try:
+        create_constraints()
+        logger.info("Neo4j constraints applied at startup")
+    except Exception as e:
+        logger.warning(f"Neo4j startup failed (will retry on first request): {e}")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down AI Service...")
+    close_driver()
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="Intelli-Credit AI Service",
-    description="OCR, page classification, and structured extraction for Indian financial documents.",
-    version="0.1.0",
+    description="OCR, page classification, structured extraction, and entity graph for Indian financial documents.",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -62,8 +96,15 @@ BASE_PATH = Path("/tmp/intelli-credit")
 
 @app.get("/health")
 async def health_check():
-    """Liveness probe."""
-    return {"status": "ok"}
+    """Liveness probe — includes Neo4j connectivity status."""
+    neo4j_ok = neo4j_health_check()
+    return {
+        "status": "ok" if neo4j_ok else "degraded",
+        "services": {
+            "ai_service": True,
+            "neo4j": neo4j_ok,
+        },
+    }
 
 
 @app.post("/api/v1/process-document", response_model=ProcessDocumentResponse)

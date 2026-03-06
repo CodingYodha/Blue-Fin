@@ -29,3 +29,6 @@ langchain-anthropic
 
 # Vector DB (existing)
 qdrant-client
+
+# Graph DB (Entity Graph)
+neo4j
