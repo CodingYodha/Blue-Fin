@@ -12,9 +12,8 @@ All Cypher uses $param syntax — never f-strings (prevents injection).
 import logging
 from typing import Optional
 
-from pydantic import BaseModel, Field
-
 from deep_learning.schemas import EntityExtraction
+from .schemas import WriteResult
 from .neo4j_client import (
     get_driver,
     PERSON,
@@ -30,30 +29,6 @@ from .neo4j_client import (
 )
 
 logger = logging.getLogger("entity_graph.graph_writer")
-
-
-# =============================================================================
-# WriteResult schema
-# =============================================================================
-
-class WriteResult(BaseModel):
-    """Result of writing entities to the Neo4j graph."""
-
-    model_config = {"json_schema_extra": {"title": "WriteResult"}}
-
-    job_id: str = Field(..., description="Job ID for this graph write")
-    nodes_written: int = Field(
-        default=0, description="Count of MERGE node operations executed"
-    )
-    relationships_written: int = Field(
-        default=0, description="Count of MERGE relationship operations executed"
-    )
-    status: str = Field(
-        default="success", description="'success' or 'failed'"
-    )
-    error: Optional[str] = Field(
-        default=None, description="Error message if status is 'failed'"
-    )
 
 
 # =============================================================================

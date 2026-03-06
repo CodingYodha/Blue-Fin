@@ -20,10 +20,17 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from deep_learning.schemas import EntityExtraction
+from .schemas import (
+    BuildGraphRequest,
+    SetDecisionRequest,
+    FraudFlag,
+    GraphNode,
+    GraphEdge,
+)
 from .neo4j_client import get_driver, APPLICATION
 from .graph_writer import write_entity_graph
-from .fraud_detector import run_all_fraud_checks, FraudFlag
-from .graph_exporter import export_graph_for_ui, GraphNode, GraphEdge
+from .fraud_detector import run_all_fraud_checks
+from .graph_exporter import export_graph_for_ui
 
 logger = logging.getLogger("entity_graph.routes")
 
@@ -37,27 +44,8 @@ router = APIRouter(
 
 
 # =============================================================================
-# Request / Response models
+# Response models (route-specific, not in schemas.py)
 # =============================================================================
-
-class BuildGraphRequest(BaseModel):
-    """POST /api/v1/entity-graph/build request body."""
-
-    model_config = {"json_schema_extra": {"title": "BuildGraphRequest"}}
-
-    job_id: str = Field(
-        ..., description="Job ID from the document processing pipeline"
-    )
-    borrower_name: str = Field(
-        ..., description="Primary borrower company name"
-    )
-    entity_extraction_path: str = Field(
-        ...,
-        description=(
-            "Path to ocr_output.json written by Section 3, "
-            "e.g. /tmp/intelli-credit/{job_id}/ocr_output.json"
-        ),
-    )
 
 
 class BuildGraphResponse(BaseModel):
@@ -118,20 +106,6 @@ class FraudFlagsResponse(BaseModel):
     error: Optional[str] = Field(
         default=None, description="Error message if status is 'failed'"
     )
-
-
-class SetDecisionRequest(BaseModel):
-    """POST /api/v1/entity-graph/{job_id}/set-decision request body."""
-
-    model_config = {"json_schema_extra": {"title": "SetDecisionRequest"}}
-
-    decision: Literal["APPROVE", "CONDITIONAL", "REJECT"] = Field(
-        ..., description="Final credit decision from the LightGBM scoring pipeline"
-    )
-    score: int = Field(
-        ..., description="Final credit score (0-100)"
-    )
-
 
 class SetDecisionResponse(BaseModel):
     """POST /api/v1/entity-graph/{job_id}/set-decision response."""

@@ -17,8 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from pydantic import BaseModel, Field
-
+from .schemas import GraphNode, GraphEdge, GraphExport
 from .neo4j_client import (
     COMPANY,
     PERSON,
@@ -37,72 +36,6 @@ logger = logging.getLogger("entity_graph.graph_exporter")
 
 # Shared volume base path
 _BASE_PATH = Path("/tmp/intelli-credit")
-
-
-# =============================================================================
-# Models
-# =============================================================================
-
-class GraphNode(BaseModel):
-    """A single node in the frontend graph visualization."""
-
-    model_config = {"json_schema_extra": {"title": "GraphNode"}}
-
-    id: str = Field(..., description="Neo4j element ID (string)")
-    label: str = Field(..., description="Display name (company or person name)")
-    type: str = Field(
-        ..., description="Node type: COMPANY, PERSON, LOAN, or APPLICATION"
-    )
-    is_borrower: bool = Field(
-        default=False, description="True if this is the primary borrower company"
-    )
-    is_flagged: bool = Field(
-        default=False, description="True if involved in a fraud flag"
-    )
-    flag_type: Optional[str] = Field(
-        default=None,
-        description="Fraud flag type if flagged, e.g. RELATED_PARTY_DIRECTOR_OVERLAP",
-    )
-    properties: Dict[str, Any] = Field(
-        default_factory=dict, description="All Neo4j node properties"
-    )
-
-
-class GraphEdge(BaseModel):
-    """A single edge in the frontend graph visualization."""
-
-    model_config = {"json_schema_extra": {"title": "GraphEdge"}}
-
-    id: str = Field(..., description="Neo4j relationship element ID (string)")
-    source: str = Field(..., description="Source node element ID")
-    target: str = Field(..., description="Target node element ID")
-    type: str = Field(
-        ..., description="Relationship type, e.g. PAID_TO, DIRECTOR_OF"
-    )
-    label: str = Field(
-        ...,
-        description="Human-readable label, e.g. 'Paid ₹4.2Cr' or 'Director of'",
-    )
-    is_flagged: bool = Field(
-        default=False, description="True if this edge is part of a fraud flag"
-    )
-    properties: Dict[str, Any] = Field(
-        default_factory=dict, description="Relationship properties (amount, date, etc.)"
-    )
-
-
-class GraphExport(BaseModel):
-    """Complete graph export for the frontend force-directed visualization."""
-
-    model_config = {"json_schema_extra": {"title": "GraphExport"}}
-
-    job_id: str = Field(..., description="Job ID this graph belongs to")
-    nodes: List[GraphNode] = Field(
-        default_factory=list, description="All graph nodes"
-    )
-    edges: List[GraphEdge] = Field(
-        default_factory=list, description="All graph edges"
-    )
 
 
 # =============================================================================

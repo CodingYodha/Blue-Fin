@@ -25,8 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-
+from .schemas import FraudFlag, FraudDetectionResult
 from .neo4j_client import (
     COMPANY,
     PERSON,
@@ -41,65 +40,6 @@ logger = logging.getLogger("entity_graph.fraud_detector")
 
 # Shared volume base path
 _BASE_PATH = Path("/tmp/intelli-credit")
-
-
-# =============================================================================
-# Models
-# =============================================================================
-
-class FraudFlag(BaseModel):
-    """A single detected fraud pattern."""
-
-    model_config = {"json_schema_extra": {"title": "FraudFlag"}}
-
-    flag_type: str = Field(
-        ...,
-        description="Fraud pattern identifier: RELATED_PARTY_DIRECTOR_OVERLAP, "
-                    "HISTORICAL_REJECTION_MATCH, SHELL_SUPPLIER_NETWORK, "
-                    "CIRCULAR_OWNERSHIP_PAYMENT",
-    )
-    severity: str = Field(
-        ..., description="CRITICAL, HIGH, MEDIUM, or LOW"
-    )
-    score_penalty: int = Field(
-        ..., description="Negative score penalty applied to the credit score"
-    )
-    description: str = Field(
-        ..., description="Human-readable description of the fraud pattern detected"
-    )
-    evidence: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Key evidence data points (director names, amounts, etc.)",
-    )
-    source: str = Field(
-        default="Entity Graph — Neo4j Cypher traversal",
-        description="Source module/method that detected this flag",
-    )
-
-
-class FraudDetectionResult(BaseModel):
-    """Aggregate result of all fraud checks for a single application."""
-
-    model_config = {"json_schema_extra": {"title": "FraudDetectionResult"}}
-
-    job_id: str = Field(..., description="Job ID of the application checked")
-    borrower_name: str = Field(
-        ..., description="Primary borrower company name"
-    )
-    flags: List[FraudFlag] = Field(
-        default_factory=list, description="All detected fraud flags"
-    )
-    total_score_penalty: int = Field(
-        default=0, description="Sum of all flag score penalties"
-    )
-    highest_severity: str = Field(
-        default="NONE",
-        description="Highest severity across all flags: CRITICAL > HIGH > MEDIUM > NONE",
-    )
-    checked_at: str = Field(
-        default="",
-        description="ISO timestamp of when the checks were run",
-    )
 
 
 # =============================================================================

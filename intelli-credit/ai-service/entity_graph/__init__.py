@@ -2,11 +2,13 @@
 Entity Graph module — Neo4j-backed entity relationship graph for Intelli-Credit.
 
 Sub-modules:
+  - schemas        : All Pydantic v2 models (single source of truth)
   - neo4j_client   : Connection singleton, schema constants, constraints, health check
   - graph_writer   : Writes EntityExtraction into Neo4j (MERGE/upsert)
   - fuzzy_matcher  : V12 fix — fuzzy entity-to-transaction matching
   - fraud_detector : Cypher-based cross-application fraud detection
   - graph_exporter : Frontend-ready {nodes, edges} JSON export
+  - routes         : FastAPI APIRouter with 4 endpoints
 """
 
 from .neo4j_client import (
@@ -27,7 +29,19 @@ from .neo4j_client import (
     APPLIED_FOR,
     FLAGGED_IN,
 )
-from .graph_writer import write_entity_graph, WriteResult
+from .schemas import (
+    WriteResult,
+    EntityMatchResult,
+    TransactionLinkResult,
+    FraudFlag,
+    FraudDetectionResult,
+    GraphNode,
+    GraphEdge,
+    GraphExport,
+    BuildGraphRequest,
+    SetDecisionRequest,
+)
+from .graph_writer import write_entity_graph
 from .fuzzy_matcher import (
     normalize_entity_name,
     match_score,
@@ -35,26 +49,15 @@ from .fuzzy_matcher import (
     find_entity_in_transactions,
     link_transactions_to_graph,
     MatchConfidence,
-    EntityMatchResult,
-    TransactionLinkResult,
 )
-
 from .fraud_detector import (
     run_all_fraud_checks,
     detect_related_party_director_overlap,
     detect_historical_rejection,
     detect_shell_supplier_network,
     detect_circular_ownership,
-    FraudFlag,
-    FraudDetectionResult,
 )
-
-from .graph_exporter import (
-    export_graph_for_ui,
-    GraphNode,
-    GraphEdge,
-    GraphExport,
-)
+from .graph_exporter import export_graph_for_ui
 
 __all__ = [
     "get_driver",

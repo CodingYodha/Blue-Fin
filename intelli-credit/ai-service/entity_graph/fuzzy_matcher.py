@@ -27,59 +27,21 @@ import re
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
 from thefuzz import fuzz
+
+from .schemas import EntityMatchResult, TransactionLinkResult
 
 logger = logging.getLogger("entity_graph.fuzzy_matcher")
 
 
-# =============================================================================
-# Models
-# =============================================================================
+# MatchConfidence enum is kept here since it's used as internal logic
+# (schemas.py uses Literal strings for API serialization)
 
 class MatchConfidence(str, Enum):
     """Match confidence level based on fuzzy score."""
     CONFIRMED_MATCH = "CONFIRMED_MATCH"   # score >= 85
     PROBABLE_MATCH = "PROBABLE_MATCH"     # 70 <= score < 85
     NO_MATCH = "NO_MATCH"                 # score < 70
-
-
-class EntityMatchResult(BaseModel):
-    """A single fuzzy match result between an entity and a transaction."""
-
-    model_config = {"json_schema_extra": {"title": "EntityMatchResult"}}
-
-    entity_name: str = Field(
-        ..., description="Original NER entity name"
-    )
-    matched_description: str = Field(
-        ..., description="Bank transaction description that matched"
-    )
-    score: int = Field(
-        ..., description="Fuzzy match score (0-100)"
-    )
-    confidence: MatchConfidence = Field(
-        ..., description="CONFIRMED_MATCH, PROBABLE_MATCH, or NO_MATCH"
-    )
-
-
-class TransactionLinkResult(BaseModel):
-    """Summary of fuzzy-match linking across all entities and transactions."""
-
-    model_config = {"json_schema_extra": {"title": "TransactionLinkResult"}}
-
-    confirmed_links: int = Field(
-        default=0, description="Number of CONFIRMED_MATCH relationships written"
-    )
-    probable_links: int = Field(
-        default=0, description="Number of PROBABLE_MATCH relationships written"
-    )
-    entities_checked: int = Field(
-        default=0, description="Total NER entity names checked"
-    )
-    transactions_checked: int = Field(
-        default=0, description="Total transaction descriptions checked"
-    )
 
 
 # =============================================================================
