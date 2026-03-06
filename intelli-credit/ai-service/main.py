@@ -37,6 +37,7 @@ from rag import (
 from rag.qdrant_client import close_client as close_qdrant
 from rag.routes import router as rag_router
 from agents.routes import router as research_agent_router
+from ml_core.model_loader import load_artifacts
 
 load_dotenv()
 
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant collection verified at startup")
     except Exception as e:
         logger.warning(f"Qdrant startup failed (will retry on first request): {e}")
+
+    try:
+        logger.info("Loading ML Core artifacts...")
+        load_artifacts()
+    except Exception as e:
+        logger.warning(f"ML Artifact loading failed: {e}")
 
     yield
 
