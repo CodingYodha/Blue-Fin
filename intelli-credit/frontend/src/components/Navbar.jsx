@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
-import { Upload, History, LayoutDashboard } from "lucide-react";
+import { Upload, History, LayoutDashboard, Moon, Sun } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useTheme } from "../context/ThemeContext.jsx";
 
 const NAV_LINKS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -11,6 +12,7 @@ const NAV_LINKS = [
 export default function Navbar() {
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <nav className="navbar">
@@ -61,6 +63,14 @@ export default function Navbar() {
             Sign In
           </Link>
         )}
+        <button
+          onClick={toggleTheme}
+          className="btn-icon btn-ghost"
+          style={{ borderRadius: 'var(--radius-sm)' }}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
       </div>
       </nav>
   );

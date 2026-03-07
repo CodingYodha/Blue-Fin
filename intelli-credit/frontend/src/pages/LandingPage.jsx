@@ -282,7 +282,7 @@ export default function LandingPage() {
           borderTop: "1px solid var(--border)",
           borderBottom: "1px solid var(--border)",
           padding: "14px 0",
-          background: "rgba(33,33,38,0.5)",
+          background: "var(--bg-secondary)",
         }}
         className="select-none"
       >
