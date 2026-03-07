@@ -223,7 +223,7 @@ export default function LandingPage() {
         >
           End-to-end AI credit appraisal for Indian banks. Forensic PDF
           analysis, LightGBM scoring, autonomous research, and
-          officer-grade memos — in one pipeline.
+          officer-grade memos in one pipeline.
         </p>
 
         {/* CTAs */}
@@ -662,45 +662,6 @@ export default function LandingPage() {
           </button>
         </div>
       </section>
-
-      {/* ══════ FOOTER ══════ */}
-      <footer
-        style={{
-          borderTop: "1px solid var(--border)",
-          padding: "40px 24px",
-          maxWidth: "1200px",
-          margin: "0 auto",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <span
-            className="serif"
-            style={{
-              fontWeight: 700,
-              fontSize: "14px",
-              color: "var(--accent)",
-              letterSpacing: "0.04em",
-            }}
-          >
-            INTELLI-CREDIT
-          </span>
-          <p style={{ color: "var(--text-muted)", fontSize: "12px", marginTop: "2px" }}>
-            AI-Powered Corporate Credit Decisioning
-          </p>
-        </div>
-        <p
-          style={{
-            color: "var(--text-muted)",
-            fontSize: "12px",
-            fontFamily: "var(--font-body)",
-          }}
-        >
-          IIT Hyderabad · 2026
-        </p>
-      </footer>
     </div>
   );
 }
