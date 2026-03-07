@@ -44,3 +44,31 @@ body {
     transform: translateX(0);
   }
 }
+
+/* Marquee scrolling ticker */
+.marquee-outer {
+  overflow: hidden;
+}
+.marquee-inner {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 32s linear infinite;
+}
+@keyframes marqueeScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Carousel progress bar */
+@keyframes carouselProgress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
