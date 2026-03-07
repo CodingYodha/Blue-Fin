@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { Upload, X, Check, FileText, AlertCircle } from "lucide-react";
 
 const SYMBOLS = {
-  annual_report: { glyph: "◎", color: "#f97316" },
-  gst_filing: { glyph: "⬡", color: "#10b981" },
-  bank_statement: { glyph: "◈", color: "#00d4ff" },
-  itr: { glyph: "◆", color: "#f59e0b" },
-  mca: { glyph: "◉", color: "#7c3aed" },
+  annual_report: { icon: FileText, color: "#f97316" },
+  gst_filing: { icon: FileText, color: "#22c55e" },
+  bank_statement: { icon: FileText, color: "#3b82f6" },
+  itr: { icon: FileText, color: "#eab308" },
+  mca: { icon: FileText, color: "#8b5cf6" },
 };
 
 function formatSize(bytes) {
@@ -40,11 +41,9 @@ export default function FileDropZone({
     e.preventDefault();
     setIsDragging(true);
   }
-
   function handleDragLeave() {
     setIsDragging(false);
   }
-
   function handleDrop(e) {
     e.preventDefault();
     setIsDragging(false);
@@ -57,7 +56,6 @@ export default function FileDropZone({
     setExtError(null);
     onFileSelect(dropped);
   }
-
   function handleInputChange(e) {
     const picked = e.target.files[0];
     if (!picked) return;
@@ -69,27 +67,25 @@ export default function FileDropZone({
     onFileSelect(picked);
     e.target.value = "";
   }
-
   function openPicker() {
     document.getElementById("file-input-" + fileType).click();
   }
 
-  const { glyph, color } = SYMBOLS[fileType] || {
-    glyph: "○",
-    color: "#64748b",
+  const { icon: Icon, color } = SYMBOLS[fileType] || {
+    icon: FileText,
+    color: "#7a7a85",
   };
 
-  const borderStyle = isDragging
-    ? { borderColor: "#00d4ff", background: "rgba(0,212,255,0.04)" }
+  const zoneClass = isDragging
+    ? "dropzone dragging"
     : file
-      ? { borderColor: "#10b981", background: "rgba(16,185,129,0.04)" }
-      : { borderColor: "#1e2d45", background: "transparent" };
+      ? "dropzone uploaded"
+      : "dropzone";
 
   return (
     <div>
       <div
-        className="border-2 border-dashed rounded-2xl p-5 cursor-pointer transition-all duration-200 hover:border-accent/50"
-        style={borderStyle}
+        className={zoneClass}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -99,67 +95,128 @@ export default function FileDropZone({
           id={"file-input-" + fileType}
           type="file"
           accept={acceptedFormats}
-          className="hidden"
+          style={{ display: "none" }}
           onChange={handleInputChange}
         />
 
         {file ? (
-          <div className="flex items-center gap-3">
-            <span
-              className="text-xl font-mono shrink-0"
-              style={{ color: "#10b981" }}
+          <div className="flex items-center gap-md" style={{ textAlign: "left" }}>
+            <div
+              style={{
+                width: "36px",
+                height: "36px",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--success-subtle)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
             >
-              ✓
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-textprimary text-sm font-medium truncate leading-tight">
+              <Check size={18} style={{ color: "var(--success)" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p
+                className="truncate"
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  color: "var(--text-primary)",
+                }}
+              >
                 {truncate(file.name, 32)}
               </p>
-              <p className="text-muted text-xs mt-0.5">
+              <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
                 {formatSize(file.size)}
               </p>
             </div>
             <button
-              className="shrink-0 text-muted hover:text-danger transition-colors text-base leading-none w-6 h-6 flex items-center justify-center rounded-full hover:bg-danger/10"
               onClick={(e) => {
                 e.stopPropagation();
                 onFileSelect(null);
               }}
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "var(--radius-full)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--text-muted)",
+                transition: "all var(--transition-fast)",
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--danger-subtle)";
+                e.currentTarget.style.color = "var(--danger)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--text-muted)";
+              }}
             >
-              ×
+              <X size={14} />
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center text-center gap-2 py-3">
-            <span
-              className="text-2xl"
-              style={{ color, fontFamily: "monospace" }}
+          <div className="flex flex-col items-center gap-sm" style={{ padding: "8px 0" }}>
+            <div
+              style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "var(--radius-md)",
+                background: color + "15",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
             >
-              {glyph}
-            </span>
-            <div>
-              <p className="text-textprimary text-sm font-medium">{label}</p>
-              <p className="text-muted text-xs mt-0.5">{description}</p>
-              <p className="text-muted text-xs mt-0.5 font-mono">
+              <Icon size={20} style={{ color }} />
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <p
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
+                }}
+              >
+                {label}
+              </p>
+              <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                {description}
+              </p>
+              <p
+                className="mono"
+                style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}
+              >
                 {acceptedFormats}
               </p>
             </div>
             <span
-              className="text-[10px] font-mono px-2.5 py-0.5 rounded-full"
-              style={{
-                background: required
-                  ? "rgba(239,68,68,0.08)"
-                  : "rgba(100,116,139,0.12)",
-                color: required ? "#ef4444" : "#64748b",
-                border: `1px solid ${required ? "rgba(239,68,68,0.25)" : "rgba(100,116,139,0.25)"}`,
-              }}
+              className={required ? "badge badge-danger" : "badge badge-neutral"}
+              style={{ fontSize: "10px" }}
             >
               {required ? "Required" : "Optional"}
             </span>
           </div>
         )}
       </div>
-      {extError && <p className="text-danger text-xs mt-1.5">{extError}</p>}
+      {extError && (
+        <p
+          className="flex items-center gap-xs"
+          style={{
+            color: "var(--danger)",
+            fontSize: "11px",
+            marginTop: "6px",
+          }}
+        >
+          <AlertCircle size={12} /> {extError}
+        </p>
+      )}
     </div>
   );
 }

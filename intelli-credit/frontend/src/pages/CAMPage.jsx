@@ -14,39 +14,47 @@ const SECTIONS = [
 ];
 
 function scoreColor(score) {
-  if (score >= 75) return "text-accent3";
-  if (score >= 55) return "text-warn";
-  return "text-danger";
+  if (score >= 75) return "var(--success)";
+  if (score >= 55) return "var(--warning)";
+  return "var(--danger)";
 }
 
-function decisionBg(decision) {
-  if (!decision) return "bg-muted/20 text-muted";
+function decisionBadgeClass(decision) {
+  if (!decision) return "badge-neutral";
   const d = decision.toUpperCase();
-  if (d === "APPROVE")
-    return "bg-accent3/20 text-accent3 border border-accent3/40";
-  if (d === "CONDITIONAL")
-    return "bg-warn/20   text-warn   border border-warn/40";
-  return "bg-danger/20  text-danger  border border-danger/40";
+  if (d === "APPROVE") return "badge-success";
+  if (d === "CONDITIONAL") return "badge-warning";
+  return "badge-danger";
 }
 
 function SectionBlock({ id, title, children }) {
   return (
     <section
       id={id}
-      className="scroll-mt-8 rounded-xl border border-border bg-surface p-6 space-y-4"
+      className="card"
+      style={{ scrollMarginTop: "32px", display: "flex", flexDirection: "column", gap: "16px" }}
     >
-      <h2 className="font-mono text-lg text-accent">{title}</h2>
+      <h2 style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: "16px", color: "var(--accent)" }}>
+        {title}
+      </h2>
       {children}
     </section>
   );
 }
 
-function NarrativeBlock({ text, accentColor = "accent" }) {
+function NarrativeBlock({ text, accentColor = "var(--accent)" }) {
   return (
     <div
-      className={`border-l-4 border-${accentColor} pl-4 text-textprimary/90 leading-relaxed whitespace-pre-wrap font-sans text-sm`}
+      style={{
+        borderLeft: `3px solid ${accentColor}`,
+        paddingLeft: "16px",
+        color: "var(--text-secondary)",
+        lineHeight: 1.7,
+        whiteSpace: "pre-wrap",
+        fontSize: "14px",
+      }}
     >
-      {text || <span className="text-muted italic">No data available.</span>}
+      {text || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No data available.</span>}
     </div>
   );
 }
@@ -58,32 +66,20 @@ export default function CAMPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [regen, setRegen] = useState(false);
-  const mainRef = useRef(null);
 
   useEffect(() => {
     setIsLoading(true);
     setError(null);
     getCAM(jobId)
-      .then((data) => {
-        setCamData(data);
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        setError(err.message || "Failed to load CAM report.");
-        setIsLoading(false);
-      });
+      .then((data) => { setCamData(data); setIsLoading(false); })
+      .catch((err) => { setError(err.message || "Failed to load CAM report."); setIsLoading(false); });
   }, [jobId]);
 
   async function handleRegenerate() {
     setRegen(true);
-    try {
-      const fresh = await regenerateCAM(jobId);
-      setCamData(fresh);
-    } catch (err) {
-      setError(err.message || "Regeneration failed.");
-    } finally {
-      setRegen(false);
-    }
+    try { const fresh = await regenerateCAM(jobId); setCamData(fresh); }
+    catch (err) { setError(err.message || "Regeneration failed."); }
+    finally { setRegen(false); }
   }
 
   function scrollTo(id) {
@@ -95,13 +91,10 @@ export default function CAMPage() {
 
   if (error) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="rounded-xl border border-danger/40 bg-danger/10 p-8 text-center space-y-4">
-          <p className="text-danger font-mono text-lg">{error}</p>
-          <button
-            onClick={() => navigate(-1)}
-            className="text-accent underline text-sm"
-          >
+      <div className="flex items-center justify-center" style={{ minHeight: "100vh" }}>
+        <div className="card" style={{ background: "var(--danger-subtle)", borderColor: "rgba(239,68,68,0.3)", padding: "32px", textAlign: "center" }}>
+          <p style={{ color: "var(--danger)", fontSize: "16px", fontWeight: 600, marginBottom: "12px" }}>{error}</p>
+          <button onClick={() => navigate(-1)} style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", textDecoration: "underline" }}>
             Go back
           </button>
         </div>
@@ -114,71 +107,84 @@ export default function CAMPage() {
   const score = meta.final_score ?? camData?.final_score ?? 0;
   const decision = meta.decision || camData?.decision || "";
   const company = meta.company_name || camData?.company_name || jobId;
-
   const forensic = cam.forensic_accountant || "";
   const compliance = cam.compliance_officer || "";
   const cro = cam.chief_risk_officer || "";
   const hasCroOverride = /override|overruled/i.test(cro);
-
   const stressScenarios = camData?.stress_scenarios || [];
   const citations = camData?.source_citations || [];
 
   return (
-    <div className="page-enter flex min-h-screen text-textprimary">
+    <div className="page-enter" style={{ display: "flex", minHeight: "100vh" }}>
       {/* ── Sticky Left Sidebar ── */}
-      <aside className="hidden md:flex sticky top-0 h-screen w-72 flex-shrink-0 border-r border-border bg-surface overflow-y-auto flex-col p-6 gap-4">
+      <aside
+        className="hide-mobile"
+        style={{
+          width: "280px",
+          flexShrink: 0,
+          position: "sticky",
+          top: 0,
+          height: "100vh",
+          borderRight: "1px solid var(--border)",
+          background: "var(--bg-surface)",
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+          padding: "24px",
+          gap: "16px",
+        }}
+      >
         <div>
-          <p className="font-mono text-xs text-muted uppercase tracking-widest mb-1">
-            Credit Report
-          </p>
-          <h1 className="font-sans font-bold text-textprimary text-lg leading-tight">
-            {company}
-          </h1>
+          <span className="label" style={{ display: "block", marginBottom: "4px" }}>Credit Report</span>
+          <h3 style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: "16px" }}>{company}</h3>
         </div>
 
-        <div className={`text-4xl font-mono font-bold ${scoreColor(score)}`}>
+        <div style={{ fontFamily: "var(--font-heading)", fontSize: "36px", fontWeight: 700, color: scoreColor(score) }}>
           {Math.round(score)}
-          <span className="text-sm text-muted ml-1">/100</span>
+          <span style={{ fontSize: "14px", color: "var(--text-muted)", marginLeft: "4px", fontWeight: 400 }}>/100</span>
         </div>
 
-        <span
-          className={`inline-block rounded px-3 py-1 text-xs font-mono font-semibold uppercase ${decisionBg(decision)}`}
-        >
+        <span className={`badge ${decisionBadgeClass(decision)}`} style={{ alignSelf: "flex-start", textTransform: "uppercase", fontSize: "11px", fontWeight: 700, letterSpacing: "0.05em" }}>
           {decision || "—"}
         </span>
 
         {/* Section nav */}
-        <nav className="mt-2 flex-1">
-          <p className="text-xs text-muted uppercase tracking-widest mb-2">
-            Sections
-          </p>
-          <ul className="space-y-1">
+        <nav style={{ flex: 1, marginTop: "8px" }}>
+          <span className="label" style={{ display: "block", marginBottom: "8px" }}>Sections</span>
+          <div className="flex flex-col gap-xs">
             {SECTIONS.map((s) => (
-              <li key={s.id}>
-                <button
-                  onClick={() => scrollTo(s.id)}
-                  className="flex items-center gap-1 w-full text-left text-sm text-textprimary/70 hover:text-accent transition-colors py-0.5"
-                >
-                  <ChevronRight size={12} className="text-muted" />
-                  {s.label}
-                </button>
-              </li>
+              <button
+                key={s.id}
+                onClick={() => scrollTo(s.id)}
+                className="flex items-center gap-xs"
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: "13px", color: "var(--text-secondary)",
+                  padding: "4px 0", textAlign: "left", width: "100%",
+                  transition: "color var(--transition-fast)",
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.color = "var(--accent)"}
+                onMouseLeave={(e) => e.currentTarget.style.color = "var(--text-secondary)"}
+              >
+                <ChevronRight size={12} style={{ color: "var(--text-muted)" }} /> {s.label}
+              </button>
             ))}
-          </ul>
+          </div>
         </nav>
 
         {/* Action buttons */}
-        <div className="space-y-2 pt-2">
+        <div className="flex flex-col gap-xs" style={{ paddingTop: "8px" }}>
           <button
             onClick={() => navigate(`/analysis/${jobId}`)}
-            className="flex items-center gap-2 w-full rounded-lg border border-border px-3 py-2 text-sm text-textprimary hover:bg-surface2 transition-colors"
+            className="btn btn-secondary btn-sm w-full"
           >
             <ArrowLeft size={14} /> Back to Analysis
           </button>
           <button
             onClick={handleRegenerate}
             disabled={regen}
-            className="flex items-center gap-2 w-full rounded-lg bg-accent/10 border border-accent/30 px-3 py-2 text-sm text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+            className="btn btn-sm w-full"
+            style={{ background: "var(--accent-subtle)", color: "var(--accent)", border: "1px solid rgba(59,130,246,0.3)" }}
           >
             <RefreshCw size={14} className={regen ? "animate-spin" : ""} />
             {regen ? "Regenerating…" : "Regenerate CAM"}
@@ -187,93 +193,85 @@ export default function CAMPage() {
       </aside>
 
       {/* ── Main Content ── */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto p-8 space-y-8">
-        {/* 1. Executive Summary */}
+      <main style={{ flex: 1, overflowY: "auto", padding: "32px", display: "flex", flexDirection: "column", gap: "24px" }}>
+        {/* Executive Summary */}
         <SectionBlock id="executive-summary" title="Executive Summary">
           <div
-            className={`rounded-lg px-5 py-4 text-center text-lg font-mono font-semibold ${decisionBg(decision)}`}
+            className={`badge ${decisionBadgeClass(decision)}`}
+            style={{ display: "block", textAlign: "center", padding: "16px", borderRadius: "var(--radius-md)", fontSize: "15px", fontWeight: 700 }}
           >
-            {decision || "PENDING"} — Final Credit Score: {Math.round(score)}
-            /100
+            {decision || "PENDING"} — Final Credit Score: {Math.round(score)}/100
           </div>
           {cam.executive_summary && (
-            <p className="text-textprimary/80 text-sm leading-relaxed">
+            <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.7 }}>
               {cam.executive_summary}
             </p>
           )}
         </SectionBlock>
 
-        {/* 2. Financial Assessment */}
+        {/* Financial Assessment */}
         <SectionBlock id="financial-assessment" title="Financial Assessment">
-          <NarrativeBlock text={forensic} accentColor="accent" />
+          <NarrativeBlock text={forensic} accentColor="var(--accent)" />
         </SectionBlock>
 
-        {/* 3. Legal & Governance */}
+        {/* Legal & Governance */}
         <SectionBlock id="legal-governance" title="Legal & Governance">
-          <NarrativeBlock text={compliance} accentColor="accent2" />
+          <NarrativeBlock text={compliance} accentColor="var(--warning)" />
         </SectionBlock>
 
-        {/* 4. Final Recommendation */}
+        {/* Final Recommendation */}
         <SectionBlock id="final-recommendation" title="Final Recommendation">
           {hasCroOverride && (
-            <div className="flex items-center gap-2 rounded-lg border border-warn/40 bg-warn/10 px-4 py-2 mb-3">
-              <span className="text-warn text-xs font-mono font-semibold uppercase">
+            <div
+              className="flex items-center gap-sm"
+              style={{
+                background: "var(--warning-subtle)", border: "1px solid rgba(234,179,8,0.3)",
+                borderRadius: "var(--radius-md)", padding: "10px 16px", marginBottom: "8px",
+              }}
+            >
+              <span style={{ color: "var(--warning)", fontSize: "12px", fontWeight: 700, textTransform: "uppercase" }}>
                 ⚠ CRO Override Detected
               </span>
-              <span className="text-warn/70 text-xs">
+              <span style={{ color: "var(--warning)", opacity: 0.7, fontSize: "12px" }}>
                 The CRO has invoked an override on the model recommendation.
               </span>
             </div>
           )}
-          <NarrativeBlock text={cro} accentColor="accent3" />
+          <NarrativeBlock text={cro} accentColor="var(--success)" />
 
           {/* 4-col summary */}
-          {(meta || camData) && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-              {[
-                ["Score", `${Math.round(score)}/100`],
-                ["Decision", decision || "—"],
-                ["Industry", meta.industry || camData?.industry || "—"],
-                ["Exposure", meta.exposure || camData?.exposure || "—"],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  className="rounded-lg border border-border bg-surface2 p-3 text-center"
-                >
-                  <p className="text-xs text-muted font-mono mb-1">{label}</p>
-                  <p className="text-sm font-semibold text-textprimary">
-                    {value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="grid grid-4" style={{ gap: "12px", marginTop: "16px" }}>
+            {[
+              ["Score", `${Math.round(score)}/100`],
+              ["Decision", decision || "—"],
+              ["Industry", meta.industry || camData?.industry || "—"],
+              ["Exposure", meta.exposure || camData?.exposure || "—"],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                style={{
+                  background: "var(--bg-elevated)", border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-md)", padding: "12px", textAlign: "center",
+                }}
+              >
+                <p className="label" style={{ marginBottom: "4px" }}>{label}</p>
+                <p style={{ fontSize: "14px", fontWeight: 600 }}>{value}</p>
+              </div>
+            ))}
+          </div>
         </SectionBlock>
 
-        {/* 5. Stress Analysis */}
+        {/* Stress Analysis */}
         <SectionBlock id="stress-analysis" title="Stress Analysis">
           {stressScenarios.length === 0 ? (
-            <p className="text-muted text-sm italic">
-              No stress scenarios available.
-            </p>
+            <p style={{ color: "var(--text-muted)", fontSize: "13px", fontStyle: "italic" }}>No stress scenarios available.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm font-mono border-collapse">
+            <div className="table-container">
+              <table>
                 <thead>
-                  <tr className="border-b border-border">
-                    {[
-                      "Scenario",
-                      "Original",
-                      "Stressed",
-                      "Decision Flipped?",
-                      "Recommendation",
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left py-2 pr-4 text-muted text-xs uppercase tracking-wide"
-                      >
-                        {h}
-                      </th>
+                  <tr>
+                    {["Scenario", "Original", "Stressed", "Decision Flipped?", "Recommendation"].map((h) => (
+                      <th key={h}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -281,33 +279,16 @@ export default function CAMPage() {
                   {stressScenarios.map((s, i) => {
                     const flipped = s.decision_flipped || s.flipped;
                     return (
-                      <tr
-                        key={i}
-                        className={`border-b border-border/40 ${
-                          flipped ? "bg-danger/10" : ""
-                        }`}
-                      >
-                        <td className="py-2 pr-4 text-textprimary">
-                          {s.scenario_name || s.scenario || `Scenario ${i + 1}`}
+                      <tr key={i} style={{ background: flipped ? "var(--danger-subtle)" : undefined }}>
+                        <td>{s.scenario_name || s.scenario || `Scenario ${i + 1}`}</td>
+                        <td style={{ color: "var(--success)" }}>{s.original_score ?? "—"}</td>
+                        <td style={{ color: "var(--warning)" }}>{s.stressed_score ?? "—"}</td>
+                        <td>
+                          {flipped
+                            ? <span style={{ color: "var(--danger)", fontWeight: 600 }}>YES</span>
+                            : <span style={{ color: "var(--success)" }}>NO</span>}
                         </td>
-                        <td className="py-2 pr-4 text-accent3">
-                          {s.original_score ?? "—"}
-                        </td>
-                        <td className="py-2 pr-4 text-warn">
-                          {s.stressed_score ?? "—"}
-                        </td>
-                        <td className="py-2 pr-4">
-                          {flipped ? (
-                            <span className="text-danger font-semibold">
-                              YES
-                            </span>
-                          ) : (
-                            <span className="text-accent3">NO</span>
-                          )}
-                        </td>
-                        <td className="py-2 text-textprimary/70">
-                          {s.recommendation || "—"}
-                        </td>
+                        <td>{s.recommendation || "—"}</td>
                       </tr>
                     );
                   })}
@@ -317,37 +298,24 @@ export default function CAMPage() {
           )}
         </SectionBlock>
 
-        {/* 6. Source Citations */}
+        {/* Source Citations */}
         <SectionBlock id="source-citations" title="Source Citations">
           {citations.length === 0 ? (
-            <p className="text-muted text-sm italic">No citations recorded.</p>
+            <p style={{ color: "var(--text-muted)", fontSize: "13px", fontStyle: "italic" }}>No citations recorded.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
+            <div className="table-container">
+              <table>
                 <thead>
-                  <tr className="border-b border-border">
-                    {["Claim", "Source", "Module"].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left py-2 pr-4 text-muted font-mono text-xs uppercase tracking-wide"
-                      >
-                        {h}
-                      </th>
-                    ))}
+                  <tr>
+                    {["Claim", "Source", "Module"].map((h) => <th key={h}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {citations.map((c, i) => (
-                    <tr key={i} className="border-b border-border/40">
-                      <td className="py-2 pr-4 text-textprimary/80">
-                        {c.claim || "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-accent/80 font-mono text-xs">
-                        {c.source || "—"}
-                      </td>
-                      <td className="py-2 text-muted font-mono text-xs">
-                        {c.module || "—"}
-                      </td>
+                    <tr key={i}>
+                      <td>{c.claim || "—"}</td>
+                      <td style={{ color: "var(--accent)", fontSize: "12px", fontFamily: "var(--font-mono)" }}>{c.source || "—"}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "12px", fontFamily: "var(--font-mono)" }}>{c.module || "—"}</td>
                     </tr>
                   ))}
                 </tbody>

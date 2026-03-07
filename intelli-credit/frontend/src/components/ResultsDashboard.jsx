@@ -12,39 +12,28 @@ const TABS = [
   { id: "research", label: "Research" },
 ];
 
-export default function ResultsDashboard({
-  result,
-  activeTab,
-  onTabChange,
-  jobId,
-}) {
+export default function ResultsDashboard({ result, activeTab, onTabChange, jobId }) {
   return (
-    <div className="min-h-screen bg-bg p-6">
-      <div className="max-w-6xl mx-auto">
+    <div style={{ padding: "24px" }}>
+      <div className="container">
         {/* Page header */}
-        <div className="mb-6">
-          <p className="font-mono text-accent text-xs tracking-widest uppercase mb-1">
-            ANALYSIS COMPLETE
-          </p>
-          <h1 className="text-textprimary text-2xl font-sans font-semibold">
+        <div style={{ marginBottom: "24px" }}>
+          <div className="eyebrow" style={{ marginBottom: "8px" }}>Analysis Complete</div>
+          <h2 style={{ fontFamily: "var(--font-body)", fontWeight: 600, marginBottom: "4px" }}>
             {result.company_name}
-          </h1>
-          <p className="text-muted font-mono text-xs mt-1">
+          </h2>
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
             Job ID: {result.job_id}
           </p>
         </div>
 
         {/* Tab bar */}
-        <div className="flex gap-1 bg-surface border border-border rounded-xl p-1.5 mb-6 flex-wrap">
+        <div className="tab-bar" style={{ marginBottom: "24px" }}>
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`font-mono text-sm px-4 py-2 rounded-md transition-colors ${
-                activeTab === tab.id
-                  ? "bg-accent text-bg font-semibold"
-                  : "text-muted hover:text-textprimary"
-              }`}
+              className={`tab-item ${activeTab === tab.id ? "active" : ""}`}
             >
               {tab.label}
             </button>
@@ -54,9 +43,7 @@ export default function ResultsDashboard({
         {/* Active tab content */}
         <div>
           {activeTab === "overview" && <OverviewTab result={result} />}
-          {activeTab === "fraud" && (
-            <FraudTab fraudFeatures={result.fraud_features} />
-          )}
+          {activeTab === "fraud" && <FraudTab fraudFeatures={result.fraud_features} />}
           {activeTab === "score" && (
             <ScoreTab
               scoreBreakdown={result.score_breakdown}
@@ -65,14 +52,9 @@ export default function ResultsDashboard({
             />
           )}
           {activeTab === "graph" && (
-            <EntityGraphTab
-              nodes={result.entity_nodes}
-              edges={result.entity_edges}
-            />
+            <EntityGraphTab nodes={result.entity_nodes} edges={result.entity_edges} />
           )}
-          {activeTab === "research" && (
-            <ResearchTab findings={result.research_findings} />
-          )}
+          {activeTab === "research" && <ResearchTab findings={result.research_findings} />}
         </div>
       </div>
     </div>
