@@ -1,20 +1,22 @@
 export default function ConfidenceBadge({ confidence }) {
   if (!confidence) return null;
-
-  if (confidence === "HIGH") {
-    return (
-      <span className="inline-flex items-center gap-1 rounded border border-accent3 bg-accent3/10 px-2 py-0.5 text-xs text-accent3">
-        ✓ HIGH CONFIDENCE
-      </span>
-    );
-  }
-
+  const pct = typeof confidence === "number" ? Math.round(confidence * 100) : confidence;
+  const color = pct >= 80 ? "var(--success)" : pct >= 50 ? "var(--warning)" : "var(--danger)";
+  const bg = pct >= 80 ? "var(--success-subtle)" : pct >= 50 ? "var(--warning-subtle)" : "var(--danger-subtle)";
   return (
     <span
-      title="Manual verification recommended"
-      className="inline-flex items-center gap-1 rounded border border-warn bg-warn/10 px-2 py-0.5 text-xs text-warn"
+      style={{
+        fontSize: "10px",
+        fontWeight: 600,
+        padding: "2px 8px",
+        borderRadius: "var(--radius-full)",
+        background: bg,
+        color: color,
+        border: `1px solid ${color}30`,
+        fontFamily: "var(--font-body)",
+      }}
     >
-      ⚠ LOW CONFIDENCE
+      {pct}%
     </span>
   );
 }

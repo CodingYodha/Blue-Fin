@@ -1,37 +1,34 @@
 export default function CAMSkeleton() {
   return (
-    <div className="flex min-h-screen animate-pulse">
+    <div className="animate-pulse" style={{ display: "flex", minHeight: "100vh" }}>
       {/* Sidebar skeleton */}
-      <aside className="w-72 flex-shrink-0 border-r border-border p-6 space-y-4">
-        <div className="h-6 w-3/4 rounded bg-surface2" />
-        <div className="h-10 w-1/2 rounded bg-surface2" />
-        <div className="h-5 w-1/3 rounded bg-surface2" />
-        <div className="mt-6 space-y-2">
+      <aside
+        className="hide-mobile"
+        style={{
+          width: "280px", flexShrink: 0, borderRight: "1px solid var(--border)",
+          padding: "24px", display: "flex", flexDirection: "column", gap: "16px",
+        }}
+      >
+        <div style={{ height: "24px", width: "75%", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
+        <div style={{ height: "40px", width: "50%", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
+        <div style={{ height: "20px", width: "33%", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
+        <div style={{ marginTop: "24px", display: "flex", flexDirection: "column", gap: "8px" }}>
           {Array.from({ length: 6 }).map((_, i) => (
-            <div
-              key={i}
-              className="h-4 rounded bg-surface2"
-              style={{ width: `${70 + (i % 3) * 10}%` }}
-            />
+            <div key={i} style={{ height: "16px", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)", width: `${70 + (i % 3) * 10}%` }} />
           ))}
         </div>
-        <div className="mt-8 space-y-3">
-          <div className="h-9 rounded bg-surface2" />
-          <div className="h-9 rounded bg-surface2" />
+        <div style={{ marginTop: "32px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ height: "36px", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
+          <div style={{ height: "36px", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
         </div>
       </aside>
-
       {/* Main skeleton */}
-      <main className="flex-1 p-8 space-y-10">
+      <main style={{ flex: 1, padding: "32px", display: "flex", flexDirection: "column", gap: "40px" }}>
         {Array.from({ length: 6 }).map((_, sectionIdx) => (
-          <div key={sectionIdx} className="space-y-3">
-            <div className="h-6 w-48 rounded bg-surface2" />
+          <div key={sectionIdx} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div style={{ height: "24px", width: "180px", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)" }} />
             {Array.from({ length: 4 }).map((_, lineIdx) => (
-              <div
-                key={lineIdx}
-                className="h-4 rounded bg-surface2"
-                style={{ width: `${60 + ((lineIdx + sectionIdx) % 4) * 10}%` }}
-              />
+              <div key={lineIdx} style={{ height: "16px", borderRadius: "var(--radius-sm)", background: "var(--bg-elevated)", width: `${60 + ((lineIdx + sectionIdx) % 4) * 10}%` }} />
             ))}
           </div>
         ))}

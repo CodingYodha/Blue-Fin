@@ -11,15 +11,17 @@ function AppShell() {
   const location = useLocation();
   const isLanding = location.pathname === "/";
   return (
-    <div className="bg-bg min-h-screen">
-      {!isLanding && <Navbar />}
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/upload" element={<UploadPage />} />
-        <Route path="/analysis/:jobId" element={<AnalysisPage />} />
-        <Route path="/cam/:jobId" element={<CAMPage />} />
-        <Route path="/history" element={<HistoryPage />} />
-      </Routes>
+    <div className="grid-bg page">
+      <Navbar />
+      <div className={isLanding ? "" : "has-navbar"}>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/analysis/:jobId" element={<AnalysisPage />} />
+          <Route path="/cam/:jobId" element={<CAMPage />} />
+          <Route path="/history" element={<HistoryPage />} />
+        </Routes>
+      </div>
     </div>
   );
 }

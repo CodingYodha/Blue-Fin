@@ -18,9 +18,7 @@ export default function AnalysisPage() {
   const sourceRef = useRef(null);
 
   useEffect(() => {
-    function onResize() {
-      setIsMobile(window.innerWidth < 768);
-    }
+    function onResize() { setIsMobile(window.innerWidth < 768); }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -35,10 +33,7 @@ export default function AnalysisPage() {
       setResult(event.data);
       setIsComplete(true);
       setPercent(100);
-      if (sourceRef.current) {
-        sourceRef.current.close();
-        sourceRef.current = null;
-      }
+      if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; }
     } else if (event.type === "error") {
       setSseError(event.message);
       setEvents((prev) => [...prev, event]);
@@ -48,27 +43,28 @@ export default function AnalysisPage() {
   useEffect(() => {
     const source = createSSEConnection(jobId, handleEvent);
     sourceRef.current = source;
-    return () => {
-      if (sourceRef.current) {
-        sourceRef.current.close();
-        sourceRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; } };
   }, []);
 
   if (sseError) {
     return (
-      <div className="page-enter min-h-screen bg-bg flex items-center justify-center p-6">
-        <div className="bg-danger/10 border border-danger rounded-xl p-8 max-w-md w-full text-center">
-          <p className="text-danger font-mono text-sm uppercase tracking-widest mb-2">
+      <div className="page-enter flex items-center justify-center" style={{ minHeight: "100vh", padding: "24px" }}>
+        <div
+          className="card"
+          style={{
+            background: "var(--danger-subtle)",
+            borderColor: "rgba(239,68,68,0.3)",
+            padding: "32px",
+            maxWidth: "400px",
+            width: "100%",
+            textAlign: "center",
+          }}
+        >
+          <span className="label" style={{ color: "var(--danger)", marginBottom: "8px", display: "block" }}>
             Pipeline Error
-          </p>
-          <p className="text-textprimary text-base mb-6">{sseError}</p>
-          <Link
-            to="/"
-            className="bg-accent text-bg font-mono font-semibold px-6 py-3 rounded-lg hover:bg-accent/90 transition-colors"
-          >
+          </span>
+          <p style={{ fontSize: "15px", marginBottom: "24px" }}>{sseError}</p>
+          <Link to="/" className="btn btn-primary btn-sm" style={{ textDecoration: "none" }}>
             Try Again
           </Link>
         </div>
@@ -78,43 +74,28 @@ export default function AnalysisPage() {
 
   if (isMobile) {
     return (
-      <div className="page-enter min-h-screen bg-bg flex flex-col items-center justify-center gap-5 p-8 text-center">
-        <span className="font-mono text-accent text-xl font-bold tracking-widest">
+      <div className="page-enter flex flex-col items-center justify-center" style={{ minHeight: "100vh", padding: "32px", textAlign: "center", gap: "16px" }}>
+        <span className="serif" style={{ fontSize: "20px", fontWeight: 700, color: "var(--accent)" }}>
           INTELLI-CREDIT
         </span>
-        <p className="text-textprimary font-semibold">
-          Analysis dashboard is optimised for desktop.
-        </p>
-        <p className="text-muted text-sm">
+        <p style={{ fontWeight: 600 }}>Analysis dashboard is optimised for desktop.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
           Please open this page on a larger screen.
         </p>
-        <Link to="/" className="text-accent underline text-sm">
-          ← Back to Home
-        </Link>
+        <Link to="/" style={{ fontSize: "13px" }}>← Back to Home</Link>
       </div>
     );
   }
 
   if (!isComplete) {
-    return (
-      <PipelineProgress
-        events={events}
-        percent={percent}
-        currentStage={currentStage}
-      />
-    );
+    return <PipelineProgress events={events} percent={percent} currentStage={currentStage} />;
   }
 
   return (
-    <div className="page-enter bg-bg min-h-screen">
-      <ResultsDashboard
-        result={result}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        jobId={jobId}
-      />
-      <div className="max-w-6xl mx-auto px-6 pb-12">
-        <hr className="border-border mb-0" />
+    <div className="page-enter">
+      <ResultsDashboard result={result} activeTab={activeTab} onTabChange={setActiveTab} jobId={jobId} />
+      <div className="container" style={{ paddingBottom: "48px" }}>
+        <hr className="divider" style={{ marginBottom: 0 }} />
         <OfficerNotesPanel
           jobId={jobId}
           currentScore={result.score_breakdown.final_score}
@@ -122,11 +103,7 @@ export default function AnalysisPage() {
           onScoreUpdate={(newScore, newDecision, delta) => {
             setResult((prev) => ({
               ...prev,
-              score_breakdown: {
-                ...prev.score_breakdown,
-                final_score: newScore,
-                decision: newDecision,
-              },
+              score_breakdown: { ...prev.score_breakdown, final_score: newScore, decision: newDecision },
             }));
           }}
         />
