@@ -5,6 +5,22 @@ import { sendEvent, closeConnection } from "../lib/sse.js";
 
 const AXIOS_TIMEOUT = 120000;
 
+// ---------------------------------------------------------------------------
+// Polling helper — most AI service endpoints run in the background and write
+// results to the shared volume.  We trigger the job, then poll a GET endpoint
+// until status !== "processing".
+// ---------------------------------------------------------------------------
+async function pollUntilReady(url, intervalMs = 2000, maxAttempts = 120) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await axios.get(url, { timeout: AXIOS_TIMEOUT });
+    if (res.data.status !== "processing") {
+      return res.data;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(`Polling timed out after ${maxAttempts} attempts for ${url}`);
+}
+
 // Send a progress SSE event, call apiFn, return its data.
 // Handles Databricks-timeout failover if detected.
 async function callStage(jobId, stageName, percent, apiFn) {
@@ -71,15 +87,15 @@ async function runPipeline(jobId) {
     let financialJson = {};
     let graphResult = { nodes: [], edges: [] };
     let researchFindings = {};
-    let scoringResult = { score_breakdown: {}, shap_values: [] };
-    let stressResults = [];
+    let scoringResult = {};
+    let stressResults = {};
     let camResult = { cam_text: "", cam_sections: {}, citations: [] };
     let structurallyFragile = false;
     const tmpPath = `${config.sharedTmpPath}/${jobId}`;
 
     // ─── STAGE 2 — GO_PDF ────────────────────────────────────────────────────
     stage = "GO_PDF";
-    percent = 12;
+    percent = 10;
     pdfResult = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -97,7 +113,7 @@ async function runPipeline(jobId) {
 
     // ─── STAGE 3 — GO_FRAUD ──────────────────────────────────────────────────
     stage = "GO_FRAUD";
-    percent = 20;
+    percent = 16;
     fraudFeatures = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -114,76 +130,151 @@ async function runPipeline(jobId) {
       return res.data;
     });
 
-    // ─── STAGE 4 — AI_OCR ────────────────────────────────────────────────────
+    // ─── STAGE 4 — AI_OCR (process-document) ────────────────────────────────
+    // The AI service POST /api/v1/process-document triggers OCR + page
+    // classification + entity extraction + financial extraction all at once.
+    // It runs in the background; we poll /api/v1/status/{job_id}.
     stage = "AI_OCR";
-    percent = 28;
-    if (pdfResult.scanned_pages && pdfResult.scanned_pages.length > 0) {
+    percent = 22;
+
+    // Find the first PDF file in the job's uploaded files
+    const pdfFile = job.files.find((f) =>
+      f.original_name.toLowerCase().endsWith(".pdf"),
+    );
+
+    if (pdfFile) {
       await callStage(jobId, stage, percent, async () => {
         sendEvent(jobId, {
           type: "progress",
           stage,
-          message: "DeepSeek-OCR processing scanned PDF pages...",
+          message:
+            "DeepSeek-OCR processing document pages, classifying and extracting...",
           percent,
         });
-        const res = await axios.post(
-          `${config.aiServiceUrl}/ocr`,
-          { job_id: jobId, scanned_pages: pdfResult.scanned_pages },
+
+        const filePath = `${tmpPath}/${pdfFile.original_name}`;
+
+        // Trigger background processing
+        await axios.post(
+          `${config.aiServiceUrl}/api/v1/process-document`,
+          {
+            job_id: jobId,
+            file_path: filePath,
+            doc_type: pdfFile.file_type || "annual_report",
+          },
           { timeout: AXIOS_TIMEOUT },
         );
-        return res.data;
+
+        // Poll until complete
+        const ocrResult = await pollUntilReady(
+          `${config.aiServiceUrl}/api/v1/status/${jobId}`,
+          2000,
+          90, // up to 3 minutes
+        );
+
+        // Extract entities from the OCR pipeline result
+        if (ocrResult.result) {
+          if (ocrResult.result.entity_extraction) {
+            entities = ocrResult.result.entity_extraction;
+          }
+          if (ocrResult.result.financial_extraction) {
+            financialJson = ocrResult.result.financial_extraction;
+          }
+        }
+
+        return ocrResult;
       });
     } else {
       sendEvent(jobId, {
         type: "progress",
         stage,
-        message: "No scanned pages detected. Skipping OCR stage.",
+        message: "No PDF files found. Skipping OCR stage.",
         percent,
       });
     }
 
     // ─── STAGE 5 — AI_NER ────────────────────────────────────────────────────
+    // NER is embedded in the process-document pipeline (Step 4 above).
+    // Entities were already extracted. This stage just reports progress.
     stage = "AI_NER";
-    percent = 36;
-    const nerResult = await callStage(jobId, stage, percent, async () => {
-      sendEvent(jobId, {
-        type: "progress",
-        stage,
-        message:
-          "NER pipeline extracting entity names and promoter information...",
-        percent,
-      });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/ner`,
-        { job_id: jobId },
-        { timeout: AXIOS_TIMEOUT },
-      );
-      return res.data;
+    percent = 32;
+    sendEvent(jobId, {
+      type: "progress",
+      stage,
+      message: entities.borrower_name
+        ? `NER complete — extracted entity: ${entities.borrower_name}`
+        : "Entity extraction complete (from document processing pipeline).",
+      percent,
     });
-    entities = nerResult.entities || {};
 
-    // ─── STAGE 6 — AI_RAG ────────────────────────────────────────────────────
+    // ─── STAGE 6 — AI_RAG (two-step: ingest → extract) ──────────────────────
+    // Step 6a: Ingest chunks into Qdrant vector store
+    // Step 6b: Run Claude structured extraction from retrieved chunks
     stage = "AI_RAG";
-    percent = 46;
-    const ragResult = await callStage(jobId, stage, percent, async () => {
+    percent = 38;
+    const ragData = await callStage(jobId, stage, percent, async () => {
+      // --- Step 6a: Ingest ---
       sendEvent(jobId, {
         type: "progress",
         stage,
         message:
-          "RAG module embedding document chunks and extracting financial JSON...",
-        percent,
+          "RAG module embedding document chunks into Qdrant vector store...",
+        percent: 38,
       });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/rag`,
+
+      // Determine doc_types from uploaded files
+      const docTypes = [...new Set(job.files.map((f) => f.file_type))];
+
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/rag/ingest`,
+        {
+          job_id: jobId,
+          company_name: job.company_name,
+          doc_types: docTypes,
+        },
+        { timeout: AXIOS_TIMEOUT },
+      );
+
+      // Poll ingest completion
+      await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/rag/ingest-status/${jobId}`,
+        2000,
+        90,
+      );
+
+      // --- Step 6b: Extract ---
+      sendEvent(jobId, {
+        type: "progress",
+        stage,
+        message:
+          "Claude structured extraction running on RAG-retrieved chunks...",
+        percent: 42,
+      });
+
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/rag/extract`,
         { job_id: jobId },
         { timeout: AXIOS_TIMEOUT },
       );
-      return res.data;
+
+      // Poll extraction completion
+      const extractionResult = await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/rag/extraction/${jobId}`,
+        2000,
+        90,
+      );
+
+      return extractionResult;
     });
-    financialJson = ragResult.financial_json || {};
+
+    // Merge RAG extraction results into financialJson if available
+    if (ragData && ragData.status === "ready") {
+      financialJson = { ...financialJson, ...ragData };
+    }
 
     // ─── STAGE 7 — AI_GRAPH ──────────────────────────────────────────────────
     stage = "AI_GRAPH";
-    percent = 54;
+    percent = 50;
     graphResult = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -192,17 +283,38 @@ async function runPipeline(jobId) {
           "Building entity relationship graph to detect related-party anomalies...",
         percent,
       });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/graph`,
-        { job_id: jobId, entities },
+
+      const borrowerName =
+        entities.borrower_name || job.company_name || "Unknown";
+      const entityExtractionPath = `${tmpPath}/ocr_output.json`;
+
+      // Trigger background graph build
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/entity-graph/build`,
+        {
+          job_id: jobId,
+          borrower_name: borrowerName,
+          entity_extraction_path: entityExtractionPath,
+        },
         { timeout: AXIOS_TIMEOUT },
       );
-      return res.data;
+
+      // Poll until graph is ready
+      const graphData = await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/entity-graph/${jobId}`,
+        2000,
+        90,
+      );
+
+      return {
+        nodes: graphData.nodes || [],
+        edges: graphData.edges || [],
+      };
     });
 
     // ─── STAGE 8 — AI_RESEARCH ───────────────────────────────────────────────
     stage = "AI_RESEARCH";
-    percent = 65;
+    percent = 60;
     researchFindings = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -211,17 +323,45 @@ async function runPipeline(jobId) {
           "Research agent searching NCLT, eCourts, news, and regulatory databases...",
         percent,
       });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/research`,
-        { job_id: jobId, company_name: job.company_name, entities },
+
+      // Extract promoter names from entities
+      const promoterNames = [];
+      if (entities.promoters && Array.isArray(entities.promoters)) {
+        for (const p of entities.promoters) {
+          if (p.name) promoterNames.push(p.name);
+        }
+      }
+
+      // Trigger background research
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/research-agent/run`,
+        {
+          job_id: jobId,
+          company_name: job.company_name,
+          promoter_names: promoterNames,
+          industry: job.industry || null,
+          cin: entities.cin || null,
+        },
         { timeout: AXIOS_TIMEOUT },
       );
-      return res.data;
+
+      // Poll until research is ready
+      const researchData = await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/research-agent/status/${jobId}`,
+        3000,
+        80, // up to 4 minutes (research can be slow)
+      );
+
+      return researchData;
     });
 
     // ─── STAGE 9 — AI_SCORING ────────────────────────────────────────────────
+    // The scoring pipeline reads all upstream data from the shared volume
+    // (fraud_features.json, rag_extraction.json, research_agent_summary.json,
+    //  entity_fraud_flags.json, etc.) — so we only need to send job_id.
+    // Stress tests are computed automatically inside the scoring pipeline.
     stage = "AI_SCORING";
-    percent = 76;
+    percent = 72;
     scoringResult = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -230,44 +370,44 @@ async function runPipeline(jobId) {
           "LightGBM 4-model ensemble computing risk score with SHAP explainability...",
         percent,
       });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/score`,
-        {
-          job_id: jobId,
-          fraud_features: fraudFeatures,
-          research: researchFindings,
-          financial_json: financialJson,
-        },
+
+      // Trigger background scoring
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/scoring/run`,
+        { job_id: jobId },
         { timeout: AXIOS_TIMEOUT },
       );
-      return res.data;
+
+      // Poll until scoring is ready
+      const scoreData = await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/scoring/result/${jobId}`,
+        2000,
+        90,
+      );
+
+      return scoreData.result || scoreData;
     });
 
     // ─── STAGE 10 — AI_STRESS ────────────────────────────────────────────────
+    // Stress tests are embedded within the scoring pipeline result.
+    // Extract them and report progress.
     stage = "AI_STRESS";
-    percent = 85;
-    stressResults = await callStage(jobId, stage, percent, async () => {
-      sendEvent(jobId, {
-        type: "progress",
-        stage,
-        message:
-          "Running 3 stress scenarios: Revenue Shock, Rate Hike, GST Scrutiny...",
-        percent,
-      });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/stress`,
-        { job_id: jobId, score_inputs: scoringResult },
-        { timeout: AXIOS_TIMEOUT },
-      );
-      return res.data;
+    percent = 82;
+    sendEvent(jobId, {
+      type: "progress",
+      stage,
+      message:
+        "Stress scenarios extracted: Revenue Shock, Rate Hike, GST Scrutiny...",
+      percent,
     });
-    structurallyFragile =
-      Array.isArray(stressResults) &&
-      stressResults.some((s) => s.flipped === true);
+
+    stressResults = scoringResult.stress_tests || {};
+    structurallyFragile = scoringResult.structurally_fragile || false;
 
     // ─── STAGE 11 — AI_CAM ───────────────────────────────────────────────────
+    // The CAM generator reads all upstream data from the shared volume.
     stage = "AI_CAM";
-    percent = 95;
+    percent = 90;
     camResult = await callStage(jobId, stage, percent, async () => {
       sendEvent(jobId, {
         type: "progress",
@@ -276,39 +416,62 @@ async function runPipeline(jobId) {
           "3-persona credit committee generating Credit Appraisal Memo...",
         percent,
       });
-      const res = await axios.post(
-        `${config.aiServiceUrl}/cam`,
-        {
-          job_id: jobId,
-          full_analysis: {
-            company_name: job.company_name,
-            fraud_features: fraudFeatures,
-            score_breakdown: scoringResult.score_breakdown,
-            shap_values: scoringResult.shap_values,
-            stress_results: stressResults,
-            entity_nodes: graphResult.nodes,
-            entity_edges: graphResult.edges,
-            research_findings: researchFindings,
-            financial_json: financialJson,
-          },
-        },
+
+      // Trigger background CAM generation
+      await axios.post(
+        `${config.aiServiceUrl}/api/v1/cam/generate`,
+        { job_id: jobId },
         { timeout: AXIOS_TIMEOUT },
       );
-      return res.data;
+
+      // Poll until CAM is ready
+      const camData = await pollUntilReady(
+        `${config.aiServiceUrl}/api/v1/cam/result/${jobId}`,
+        3000,
+        60, // up to 3 minutes
+      );
+
+      return camData.result || camData;
     });
 
     // ─── STAGE 12 — COMPLETE ─────────────────────────────────────────────────
     stage = "COMPLETE";
     percent = 100;
 
+    // Build score_breakdown from scoring result
+    const scoreBreakdown = {
+      final_score: scoringResult.final_score,
+      decision: scoringResult.decision,
+      loan_limit_crore: scoringResult.loan_limit_crore,
+      interest_rate_pct: scoringResult.interest_rate_pct,
+      decision_reason: scoringResult.decision_reason,
+      layer1_score: scoringResult.layer1_score,
+      layer2_score: scoringResult.layer2_score,
+      score_financial_health: scoringResult.score_financial_health,
+      score_credit_behaviour: scoringResult.score_credit_behaviour,
+      score_external_risk: scoringResult.score_external_risk,
+      score_text_signals: scoringResult.score_text_signals,
+    };
+
+    // Build SHAP values array from scoring result
+    const shapValues = scoringResult.shap_drivers || [];
+
+    // Convert stress test scenarios to array format for frontend
+    const stressResultsArray = stressResults.scenarios
+      ? Object.values(stressResults.scenarios)
+      : Array.isArray(stressResults)
+        ? stressResults
+        : [];
+
     const analysisResult = {
       job_id: jobId,
       company_name: job.company_name,
       industry: job.industry || null,
       fraud_features: fraudFeatures,
-      score_breakdown: scoringResult.score_breakdown,
-      shap_values: scoringResult.shap_values || [],
-      stress_results: stressResults,
+      score_breakdown: scoreBreakdown,
+      shap_values: shapValues,
+      shap_by_model: scoringResult.shap_by_model || {},
+      stress_results: stressResultsArray,
       entity_nodes: graphResult.nodes || [],
       entity_edges: graphResult.edges || [],
       research_findings: researchFindings,
@@ -316,6 +479,7 @@ async function runPipeline(jobId) {
       officer_score_delta: 0,
       cam_generated: true,
       cam_text: camResult.cam_text || "",
+      cam_sections: camResult.cam_sections || camResult.sections || {},
       citations: camResult.citations || [],
       structurally_fragile: structurallyFragile,
       processing_time_seconds: null,

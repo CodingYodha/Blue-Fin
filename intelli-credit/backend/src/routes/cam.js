@@ -44,17 +44,35 @@ router.post("/:jobId/regenerate", async (c) => {
   const job = await getJob(jobId);
   if (!job) return c.json({ error: "Job not found" }, 404);
 
-  const res = await axios.post(
-    `${config.aiServiceUrl}/cam`,
-    { job_id: jobId, full_analysis: job.result },
+  // Trigger background CAM regeneration
+  await axios.post(
+    `${config.aiServiceUrl}/api/v1/cam/regenerate`,
+    { job_id: jobId },
     { timeout: 120000 },
   );
-  const camData = res.data;
+
+  // Poll until CAM generation completes
+  let camData = null;
+  for (let i = 0; i < 60; i++) {
+    const pollRes = await axios.get(
+      `${config.aiServiceUrl}/api/v1/cam/result/${jobId}`,
+      { timeout: 30000 },
+    );
+    if (pollRes.data.status !== "processing") {
+      camData = pollRes.data.result || pollRes.data;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  if (!camData) {
+    return c.json({ error: "CAM generation timed out" }, 504);
+  }
 
   const updatedResult = {
     ...job.result,
     cam_text: camData.cam_text || "",
-    cam_sections: camData.cam_sections || {},
+    cam_sections: camData.cam_sections || camData.sections || {},
     citations: camData.citations || job.result.citations || [],
     cam_generated: true,
   };

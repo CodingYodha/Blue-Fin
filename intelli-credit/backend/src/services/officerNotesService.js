@@ -83,11 +83,11 @@ async function processOfficerNotes(jobId, rawNotes, officerId) {
 
   // Step D — Call Python AI service
   const aiRes = await axios.post(
-    `${config.aiServiceUrl}/officer-notes`,
+    `${config.aiServiceUrl}/api/v1/cam/officer-notes`,
     {
       job_id: jobId,
-      notes_xml: `<officer_notes>${sanitizedNotes}</officer_notes>`,
-      current_score: currentScore,
+      notes_text: sanitizedNotes,
+      officer_id: officerId,
     },
     { timeout: 60000 },
   );
