@@ -1,10 +1,15 @@
 import { v4 as uuidv4 } from "uuid";
 import supabase from "../lib/supabase.js";
 
-async function createJob(companyName) {
+async function createJob(companyName, userEmail) {
   const { data, error } = await supabase
     .from("jobs")
-    .insert({ id: uuidv4(), company_name: companyName, status: "pending" })
+    .insert({
+      id: uuidv4(),
+      company_name: companyName,
+      status: "pending",
+      user_email: userEmail || null,
+    })
     .select()
     .single();
 

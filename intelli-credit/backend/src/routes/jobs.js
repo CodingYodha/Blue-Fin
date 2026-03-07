@@ -12,12 +12,12 @@ router.post("/", async (c) => {
     return c.json({ error: "Invalid JSON body" }, 400);
   }
 
-  const { company_name } = body || {};
+  const { company_name, user_email } = body || {};
   if (!company_name || !company_name.trim()) {
     return c.json({ error: "company_name is required" }, 400);
   }
 
-  const job = await createJob(company_name.trim());
+  const job = await createJob(company_name.trim(), user_email);
   return c.json({ job_id: job.id, status: job.status }, 201);
 });
 

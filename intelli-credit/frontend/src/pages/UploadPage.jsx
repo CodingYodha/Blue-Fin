@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowRight, Loader } from "lucide-react";
 import FileDropZone from "../components/FileDropZone.jsx";
 import { createJob, uploadFiles } from "../api/client.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 const FILE_ZONES = [
   { fileType: "annual_report", label: "Annual Report", description: "Digital or scanned PDF", acceptedFormats: ".pdf", required: true },
@@ -17,6 +18,7 @@ const LABELS = { annual_report: "Annual Report", gst_filing: "GST Filing", bank_
 
 export default function UploadPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [companyName, setCompanyName] = useState("");
   const [files, setFiles] = useState({});
   const [isLoading, setIsLoading] = useState(false);
@@ -46,7 +48,7 @@ export default function UploadPage() {
     setUploadError(null);
 
     try {
-      const { job_id } = await createJob(companyName.trim());
+      const { job_id } = await createJob(companyName.trim(), user?.email);
       const formData = new FormData();
       for (const [key, fileObj] of Object.entries(files)) {
         formData.append(key, fileObj);

@@ -10,6 +10,7 @@ import {
   analysisRouter,
   officerRouter,
   camRouter,
+  authRouter,
 } from "./routes/index.js";
 
 const app = new Hono();
@@ -21,6 +22,7 @@ app.use("*", errorHandler);
 app.use("*", cors({ origin: "http://localhost:5173" }));
 
 // Routes
+app.route("/api/auth", authRouter);
 app.route("/api/jobs", jobsRouter);
 app.route("/api/upload", uploadRouter);
 app.route("/api/analysis", analysisRouter);

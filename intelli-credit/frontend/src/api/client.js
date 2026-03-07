@@ -13,8 +13,23 @@ api.interceptors.response.use(
   },
 );
 
-export async function createJob(companyName) {
-  const res = await api.post("/api/jobs", { company_name: companyName });
+export async function login(email, password) {
+  const res = await api.post("/api/auth/login", { email, password });
+  return res.data;
+}
+
+export async function signup(email, password) {
+  const res = await api.post("/api/auth/signup", { email, password });
+  return res.data;
+}
+
+export async function logout() {
+  const res = await api.post("/api/auth/logout");
+  return res.data;
+}
+
+export async function createJob(companyName, userEmail) {
+  const res = await api.post("/api/jobs", { company_name: companyName, user_email: userEmail });
   return res.data;
 }
 

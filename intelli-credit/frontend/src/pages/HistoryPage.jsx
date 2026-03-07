@@ -107,9 +107,16 @@ export default function HistoryPage() {
                   </h3>
                   {statusBadge(job)}
                 </div>
-                <p style={{ fontSize: "12px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                  {formatDate(job.created_at)}
-                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <p style={{ fontSize: "12px", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                    {formatDate(job.created_at)}
+                  </p>
+                  {job.user_email && (
+                    <p style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                      Ran by: {job.user_email}
+                    </p>
+                  )}
+                </div>
                 {score !== null && (
                   <div style={{ fontFamily: "var(--font-heading)", fontSize: "2rem", fontWeight: 700, color: scoreColor(score) }}>
                     {Math.round(score)}
