@@ -104,7 +104,7 @@ class IngestRequest(BaseModel):
     job_id: str = Field(..., description="Loan application job ID")
     company_name: str = Field(..., description="Borrower company name")
     doc_types: List[
-        Literal["annual_report", "rating_report", "legal_notice", "gst_filing"]
+        Literal["annual_report", "rating_report", "legal_notice", "gst_filing", "gst_3b", "gst_2a", "gst_1"]
     ] = Field(
         ...,
         description="Document types to ingest (only include types actually uploaded)",

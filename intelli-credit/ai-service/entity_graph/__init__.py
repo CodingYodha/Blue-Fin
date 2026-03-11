@@ -11,11 +11,7 @@ Sub-modules:
   - routes         : FastAPI APIRouter with 4 endpoints
 """
 
-from .neo4j_client import (
-    get_driver,
-    close_driver,
-    create_constraints,
-    neo4j_health_check,
+from .graph_store import (
     PERSON,
     COMPANY,
     LOAN,
@@ -60,10 +56,6 @@ from .fraud_detector import (
 from .graph_exporter import export_graph_for_ui
 
 __all__ = [
-    "get_driver",
-    "close_driver",
-    "create_constraints",
-    "neo4j_health_check",
     "write_entity_graph",
     "WriteResult",
     "normalize_entity_name",

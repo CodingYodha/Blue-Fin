@@ -51,25 +51,31 @@ FLAGGED_IN = "FLAGGED_IN"           # (Company|Person)-[:FLAGGED_IN {reason}]->(
 _driver: Optional[Driver] = None
 
 
-def get_driver() -> Driver:
+def get_driver() -> Optional[Driver]:
     """
     Return the module-level Neo4j driver singleton.
 
     Creates the driver on first call using environment variables:
-      - NEO4J_URI      (default: bolt://neo4j:7687)
+      - NEO4J_URI      (default: bolt://localhost:7687)
       - NEO4J_USER     (default: neo4j)
-      - NEO4J_PASSWORD (required)
+      - NEO4J_PASSWORD (default: intelli_credit_neo4j)
 
-    Raises:
-        KeyError: If NEO4J_PASSWORD is not set.
+    Returns None if the connection cannot be established.
     """
     global _driver
     if _driver is None:
-        uri = os.environ.get("NEO4J_URI", "bolt://neo4j:7687")
+        uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
         user = os.environ.get("NEO4J_USER", "neo4j")
-        password = os.environ["NEO4J_PASSWORD"]
-        _driver = GraphDatabase.driver(uri, auth=(user, password))
-        logger.info(f"Neo4j driver created: {uri} (user={user})")
+        password = os.environ.get("NEO4J_PASSWORD", "intelli_credit_neo4j")
+        try:
+            # AuraDB uses neo4j+s:// (encrypted); local uses bolt://
+            _driver = GraphDatabase.driver(uri, auth=(user, password))
+            _driver.verify_connectivity()
+            scheme = uri.split("://")[0]
+            logger.info(f"[NEO4J] Connected to {uri} (user={user}, scheme={scheme})")
+        except Exception as e:
+            logger.error(f"[NEO4J] Connection FAILED: {e}")
+            _driver = None
     return _driver
 
 
@@ -124,6 +130,8 @@ def neo4j_health_check() -> bool:
     """
     try:
         driver = get_driver()
+        if driver is None:
+            return False
         with driver.session() as session:
             session.run("RETURN 1").consume()
         return True

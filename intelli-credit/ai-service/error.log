@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "<string>", line 9, in test
+    await export_graph_for_ui(None, 'test_job_123', 'Test Borrower Ltd')
+  File "E:\hackathons\IITH_7L\intelli-credit\ai-service\entity_graph\graph_exporter.py", line 226, in export_graph_for_ui
+    nodes_dict, edges_dict = await asyncio.to_thread(_extract_graph)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Shiva\miniconda3\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Shiva\miniconda3\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "E:\hackathons\IITH_7L\intelli-credit\ai-service\entity_graph\graph_exporter.py", line 121, in _extract_graph
+    resolved_name = borrower_name
+                    ^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'borrower_name' where it is not associated with a value

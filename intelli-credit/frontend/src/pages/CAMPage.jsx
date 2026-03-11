@@ -28,18 +28,62 @@ function decisionBadgeClass(decision) {
 }
 
 function SectionBlock({ id, title, children }) {
+  const [isOpen, setIsOpen] = useState(true);
+
   return (
     <section
       id={id}
       className="card"
       style={{ scrollMarginTop: "32px", display: "flex", flexDirection: "column", gap: "16px" }}
     >
-      <h2 style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: "16px", color: "var(--accent)" }}>
-        {title}
-      </h2>
-      {children}
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", userSelect: "none" }}
+      >
+        <h2 style={{ fontFamily: "var(--font-body)", fontWeight: 600, fontSize: "16px", color: "var(--accent)", margin: 0 }}>
+          {title}
+        </h2>
+        <span style={{ color: "var(--text-muted)", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.2s ease" }}>
+          <ChevronRight size={18} />
+        </span>
+      </div>
+      
+      {isOpen && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", animation: "fadeIn 0.3s ease" }}>
+          {children}
+        </div>
+      )}
     </section>
   );
+}
+
+function formatMarkdown(text) {
+  if (!text) return <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No data available.</span>;
+
+  const lines = text.split('\n');
+  return lines.map((line, idx) => {
+    // Check for standalone **Heading** lines
+    const h2Match = line.trim().match(/^\*\*(.*)\*\*$/);
+    if (h2Match) {
+      return <h3 key={idx} style={{ color: "var(--text-primary)", marginTop: idx === 0 ? "0px" : "20px", marginBottom: "8px", fontSize: "15px", fontWeight: 600 }}>{h2Match[1]}</h3>;
+    }
+    // Check for standalone *Heading* lines
+    const h3Match = line.trim().match(/^\*(.*)\*$/);
+    if (h3Match) {
+      return <h4 key={idx} style={{ color: "var(--text-primary)", marginTop: idx === 0 ? "0px" : "16px", marginBottom: "6px", fontSize: "14px", fontWeight: 600 }}>{h3Match[1]}</h4>;
+    }
+    
+    // Parse inline bolding for regular paragraphs
+    const parts = line.split(/(\*\*.*?\*\*)/g);
+    const formattedParts = parts.map((part, pIdx) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={pIdx} style={{ color: "var(--text-primary)", fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+
+    return <div key={idx} style={{ minHeight: line.trim() === "" ? "16px" : "auto", marginBottom: "8px" }}>{formattedParts}</div>;
+  });
 }
 
 function NarrativeBlock({ text, accentColor = "var(--accent)" }) {
@@ -49,12 +93,11 @@ function NarrativeBlock({ text, accentColor = "var(--accent)" }) {
         borderLeft: `3px solid ${accentColor}`,
         paddingLeft: "16px",
         color: "var(--text-secondary)",
-        lineHeight: 1.7,
-        whiteSpace: "pre-wrap",
+        lineHeight: 1.6,
         fontSize: "14px",
       }}
     >
-      {text || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No data available.</span>}
+      {formatMarkdown(text)}
     </div>
   );
 }
@@ -102,17 +145,17 @@ export default function CAMPage() {
     );
   }
 
-  const cam = camData?.cam_report || {};
-  const meta = camData?.metadata || {};
-  const score = meta.final_score ?? camData?.final_score ?? 0;
-  const decision = meta.decision || camData?.decision || "";
-  const company = meta.company_name || camData?.company_name || jobId;
-  const forensic = cam.forensic_accountant || "";
+  const cam = camData?.cam_sections || {};
+  const meta = camData || {};
+  const score = meta.final_score ?? 0;
+  const decision = meta.decision || "";
+  const company = meta.company_name || jobId;
+  const forensic = cam.forensic_accountant || cam.cam_text || "";
   const compliance = cam.compliance_officer || "";
   const cro = cam.chief_risk_officer || "";
   const hasCroOverride = /override|overruled/i.test(cro);
-  const stressScenarios = camData?.stress_scenarios || [];
-  const citations = camData?.source_citations || [];
+  const stressScenarios = camData?.stress_summary || [];
+  const citations = camData?.citations || [];
 
   return (
     <div className="page-enter" style={{ display: "flex", minHeight: "100vh" }}>

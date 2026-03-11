@@ -40,5 +40,5 @@ class RunAgentRequest(BaseModel):
     job_id: str
     company_name: str
     promoter_names: List[str]
-    industry: str
+    industry: Optional[str] = None
     cin: Optional[str] = None

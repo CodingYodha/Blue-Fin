@@ -1,5 +1,8 @@
 from typing import List
 from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Layer1Result:
@@ -74,6 +77,11 @@ def compute_layer1_score(raw: dict, sector_config: dict) -> Layer1Result:
 
     gst_var = raw.get("GST_vs_Bank_Variance_Pct", 0)
     gst_var_normal = sector_config.get("gst_var_normal", 0.0)
+    logger.info("[L1-fraud] gst_var=%.4f itc_mismatch=%.4f round_trips=%s cash_ratio=%s",
+                gst_var,
+                raw.get("GSTR_2A_3B_ITC_Mismatch_Pct", 0),
+                raw.get("Round_Trip_Transaction_Count", 0),
+                raw.get("Cash_Deposit_Ratio", 0))
     if gst_var > 0.40:
         score -= 15
         explanations.append(f"GST-Bank variance {gst_var*100:.1f}% — severe revenue quality concern (-15pts) [GSTN Circular]")

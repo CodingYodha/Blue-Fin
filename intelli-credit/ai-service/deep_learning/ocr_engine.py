@@ -33,9 +33,9 @@ import time
 from typing import Dict, List
 
 import fitz  # PyMuPDF
-import torch
+import numpy as np
 from PIL import Image
-from unsloth import FastVisionModel
+import easyocr
 
 from .schemas import OCRPageResult
 
@@ -44,8 +44,7 @@ logger = logging.getLogger("deep_learning.ocr_engine")
 # ---------------------------------------------------------------------------
 # Module-level singleton — loaded ONCE at service startup
 # ---------------------------------------------------------------------------
-_model = None
-_tokenizer = None
+_reader = None
 _lock = threading.Lock()
 
 # DPI for page rendering: 150 for typed docs, 200 for PARTIAL pages
@@ -55,51 +54,29 @@ _PARTIAL_DPI = 200
 
 def _load_model():
     """
-    Load DeepSeek-VL2-tiny with Unsloth 4-bit quantization.
-
-    Runs once at module import.  Unsloth's FastVisionModel handles:
-      - 4-bit quantization (fits in 6 GB VRAM)
-      - Optimized CUDA kernels for faster inference
-      - ~30% less VRAM than standard bitsandbytes
-
-    Env var DEEPSEEK_MODEL_PATH must point to the HuggingFace model
-    directory containing config.json, tokenizer files, and .safetensors.
+    Load EasyOCR CPU model.
+    Runs once at module import or lazily on first OCR request.
+    Takes 1-2 GB RAM, no GPU required. Provides solid basic OCR.
     """
-    global _model, _tokenizer
-
-    model_path = os.environ.get(
-        "DEEPSEEK_MODEL_PATH",
-        os.path.join(os.path.dirname(__file__), "models", "deepseek-vl2-tiny"),
-    )
-
-    if not os.path.isdir(model_path):
-        logger.error(
-            f"Model directory not found: {model_path}.  "
-            f"Set DEEPSEEK_MODEL_PATH or download with: "
-            f"huggingface-cli download deepseek-ai/deepseek-vl2-tiny --local-dir {model_path}"
-        )
-        return
-
-    logger.info(f"Loading DeepSeek-VL2-tiny from {model_path} (4-bit, Unsloth)...")
+    global _reader
+    
+    logger.info("Loading EasyOCR (CPU mode) instead of DeepSeek-VL2...")
     load_start = time.time()
-
-    # SECURITY NOTE: trust_remote_code=True is required for DeepSeek-VL2's custom
-    # model architecture. Only use with locally downloaded, verified model weights.
-    # Never point DEEPSEEK_MODEL_PATH to an untrusted or user-controlled directory.
-    _model, _tokenizer = FastVisionModel.from_pretrained(
-        model_path,
-        load_in_4bit=True,
-        dtype=torch.float16,
-        trust_remote_code=True,
-    )
-    FastVisionModel.for_inference(_model)
-
+    # Support English and Hindi
+    _reader = easyocr.Reader(['en', 'hi'], gpu=False)
+    
     load_time = time.time() - load_start
-    logger.info(f"✅ Model loaded in {load_time:.1f}s")
+    logger.info(f"✅ EasyOCR Model loaded in {load_time:.1f}s")
 
 
-# Load at import time — runs once when ai-service starts
-_load_model()
+def _ensure_model():
+    """Lazy-load the model on first OCR request, not at import time."""
+    if _reader is None:
+        _load_model()
+
+
+# NOTE: Model is loaded lazily on first OCR request via _ensure_model()
+# This avoids crashes when no pages need OCR (the common case for digital PDFs).
 
 
 # ---------------------------------------------------------------------------
@@ -158,10 +135,9 @@ def _ocr_single_page_sync(
     page_num: int,
 ) -> OCRPageResult:
     """
-    Run OCR inference on a single page image (synchronous, GPU-bound).
+    Run OCR inference on a single page image using EasyOCR (CPU).
 
-    Acquires the global lock before inference and releases after.
-    Calls torch.cuda.empty_cache() to free activation memory between pages.
+    Acquires the global lock before inference.
 
     Args:
         page_image:   PIL Image of the rendered page.
@@ -172,70 +148,31 @@ def _ocr_single_page_sync(
     Returns:
         OCRPageResult with raw_text, has_table flag, and confidence level.
     """
-    if _model is None or _tokenizer is None:
-        logger.error("DeepSeek-VL2 model not loaded — returning empty OCR result")
+    if _reader is None:
+        _ensure_model()
+    if _reader is None:
+        logger.error("EasyOCR model not loaded — returning empty OCR result")
         return OCRPageResult(
             page_number=page_num, raw_text="", has_table=False, confidence="FAILED"
         )
-
-    user_content = (
-        f"Document type: {doc_type}. Context: {page_context}\n\n"
-        "Extract all text from this page."
-    )
 
     try:
         with _lock:
             start = time.time()
 
-            # Build chat messages in the format DeepSeek-VL2 expects
-            messages = [
-                {"role": "system", "content": _OCR_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": page_image},
-                        {"type": "text", "text": user_content},
-                    ],
-                },
-            ]
+            # EasyOCR expects numpy array
+            image_np = np.array(page_image)
+            
+            # detail=0 returns just text list, detail=1 returns bounding boxes + text + confidence
+            results = _reader.readtext(image_np, detail=1)
 
-            # Apply chat template and tokenize
-            input_text = _tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=False
-            )
-            inputs = _tokenizer(
-                input_text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-            ).to(_model.device)
-
-            # Add image to model inputs if the tokenizer supports it
-            if hasattr(_tokenizer, "process_images"):
-                image_inputs = _tokenizer.process_images([page_image])
-                inputs.update(image_inputs)
-
-            # Greedy decoding — deterministic, faster
-            with torch.no_grad():
-                output_ids = _model.generate(
-                    **inputs,
-                    max_new_tokens=2048,
-                    do_sample=False,
-                )
-
-            # Decode only the new tokens (skip the prompt)
-            generated_ids = output_ids[:, inputs["input_ids"].shape[1]:]
-            raw_text = _tokenizer.decode(
-                generated_ids[0], skip_special_tokens=True
-            ).strip()
+            # Reconstruct basic text with newlines
+            raw_text = "\n".join([text for _, text, _ in results])
 
             elapsed = time.time() - start
 
-            # Free activation memory
-            torch.cuda.empty_cache()
-
         # Classify result
-        has_table = "|" in raw_text
+        has_table = "|" in raw_text or len(raw_text) > 300 # Rough heuristic for table presence
         if len(raw_text) > 100:
             confidence = "HIGH"
         elif len(raw_text) > 0:
@@ -258,7 +195,6 @@ def _ocr_single_page_sync(
 
     except Exception as e:
         logger.error(f"OCR failed for page {page_num}: {e}")
-        torch.cuda.empty_cache()
         return OCRPageResult(
             page_number=page_num, raw_text="", has_table=False, confidence="FAILED"
         )

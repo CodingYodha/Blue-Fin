@@ -26,6 +26,11 @@ class ScoringResult(BaseModel):
     score_credit_behaviour: float
     score_external_risk: float
     score_text_signals: float
+    weighted_financial_health: float
+    weighted_credit_behaviour: float
+    weighted_external_risk: float
+    weighted_text_signals: float
+    capped_deviation: float
     pd_meta: float
     pd_m1: float
     pd_m2: float
@@ -93,12 +98,18 @@ async def run_full_scoring(job_id: str) -> ScoringResult:
         layer2_score=l2.composite_score,
         distribution_anomaly=combined.distribution_anomaly,
         anomaly_note=combined.anomaly_note,
-        # Component scores
+        # Component scores (raw L2)
         final_score=combined.final_score,
         score_financial_health=l2.score_m1,
         score_credit_behaviour=l2.score_m2,
         score_external_risk=l2.score_m3,
         score_text_signals=l2.score_m4,
+        # Weighted contributions (sum to final_score)
+        weighted_financial_health=combined.weighted_m1,
+        weighted_credit_behaviour=combined.weighted_m2,
+        weighted_external_risk=combined.weighted_m3,
+        weighted_text_signals=combined.weighted_m4,
+        capped_deviation=combined.capped_deviation,
         # PD
         pd_meta=round(l2.final_pd, 4),
         pd_m1=round(l2.pd_m1, 4),

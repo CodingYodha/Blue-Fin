@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 import json
 from model_config import CLAUDE_RESEARCH_AGENT_MODEL
-import search_backends
+from . import search_backends
 from thefuzz import fuzz
 
 load_dotenv()
@@ -26,6 +26,63 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("research_agent")
+
+
+def _safe_parse_json(raw_output: str) -> dict | None:
+    """Robustly extract JSON from Claude output, handling markdown blocks and truncated responses."""
+    # Strip markdown code fences
+    if "```json" in raw_output:
+        parts = raw_output.split("```json", 1)[1]
+        json_str = parts.split("```")[0].strip() if "```" in parts else parts.strip()
+    elif "```" in raw_output:
+        parts = raw_output.split("```", 1)[1]
+        json_str = parts.split("```")[0].strip() if "```" in parts[1:] else parts.strip()
+    else:
+        json_str = raw_output.strip()
+
+    # Try direct parse first
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt to repair truncated JSON
+    repaired = json_str
+    # Remove trailing partial string value (cut mid-sentence)
+    repaired = re.sub(r',\s*"[^"]*"?\s*:\s*"?[^"}\]]*$', '', repaired)
+    repaired = re.sub(r',\s*\{[^}]*$', '', repaired)  # remove trailing partial object in array
+
+    # Use stack-based approach to close brackets in correct nesting order
+    stack = []
+    in_string = False
+    escape_next = False
+    for ch in repaired:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ('{', '['):
+            stack.append(ch)
+        elif ch == '}' and stack and stack[-1] == '{':
+            stack.pop()
+        elif ch == ']' and stack and stack[-1] == '[':
+            stack.pop()
+    # Close in reverse nesting order
+    for opener in reversed(stack):
+        repaired += '}' if opener == '{' else ']'
+
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        logger.warning(f"JSON repair failed, raw output: {raw_output[:300]}...")
+        return None
 
 app = FastAPI(title="Web Research Agent module")
 
@@ -60,7 +117,7 @@ stats = {
 class ResearchRequest(BaseModel):
     company_name: str
     promoter_names: List[str]
-    industry: str
+    industry: Optional[str] = None
     cin: Optional[str] = None
 
 class ResearchResponse(BaseModel):
@@ -389,17 +446,20 @@ Title: {title}
 URL: {url}
 Snippet: {snippet}
 
-VERIFICATION TASK:
-Does this search result refer to the SAME company or promoter as the loan applicant?
+CRITICAL ANTI-COLLISION RULES (you MUST apply these):
+1. PARTIAL NAME MATCHES ARE NOT SUFFICIENT. For example, "Arvind Ltd" is NOT the same as "Arvind Polyfab Pvt Ltd". Each is a different company.
+2. The company name must match ALL distinctive words, not just the first word or a common prefix.
+3. Common Indian business name prefixes (e.g. Arvind, Aditya, Reliance, Tata, Adani, Bajaj, Mahindra) appear in MANY unrelated companies — a shared prefix alone is NOT a match.
+4. If a promoter name appears but is linked to a DIFFERENT company in the article, that is NOT a match.
+5. A name that is a SUBSTRING of the applicant's name (or vice versa) is NOT sufficient.
 
-Rules:
-- If the result mentions BOTH a matching promoter name AND the company name → MATCH: TRUE
-- If the result mentions ONLY the name but a DIFFERENT company → MATCH: FALSE
-- If the result mentions the CIN or DIN and it matches → MATCH: TRUE (strong signal)
-- If uncertain (insufficient context) → MATCH: UNCERTAIN
+MATCHING RULES — assign a confidence_band:
+- CONFIRMED: Article mentions the EXACT full company name AND a matching promoter/director name, OR a matching CIN/DIN identifier.
+- PROBABLE: Article mentions the exact full company name (all distinctive words) but no promoter/CIN confirmation.
+- DISCARDED: Only a partial name match (shared first word, prefix, or substring). Or the article clearly refers to a different entity.
 
 Return ONLY this JSON, nothing else:
-{{"match": true/false/null, "confidence": "HIGH"/"MEDIUM"/"LOW", "reason": "one sentence explanation"}}"""
+{{"match": true/false, "confidence_band": "CONFIRMED"/"PROBABLE"/"DISCARDED", "reason": "one sentence explanation"}}\n"""
 
         try:
             response = await client.messages.create(
@@ -409,41 +469,31 @@ Return ONLY this JSON, nothing else:
             )
             raw_output = response.content[0].text
             
-            try:
-                if "```json" in raw_output:
-                    json_str = raw_output.split("```json")[1].split("```")[0].strip()
-                elif "```" in raw_output:
-                    json_str = raw_output.split("```")[1].split("```")[0].strip()
-                else:
-                    json_str = raw_output.strip()
-                parsed = json.loads(json_str)
-            except json.JSONDecodeError:
-                parsed = {}
+            parsed = _safe_parse_json(raw_output) or {}
             
             match = parsed.get("match")
-            confidence = parsed.get("confidence", "LOW")
+            confidence_band = parsed.get("confidence_band", "DISCARDED")
             reason = parsed.get("reason", "Verification parse error" if not parsed else "")
 
             finding_dict = {
                 "result": result,
                 "match": match,
-                "confidence": confidence,
+                "confidence": confidence_band,
+                "confidence_band": confidence_band,
                 "reason": reason
             }
 
-            if match is True:
+            if confidence_band == "CONFIRMED" or (match is True and confidence_band == "PROBABLE"):
                 verified.append(finding_dict)
-            elif match is False:
+            else:
                 rejected.append(finding_dict)
-            else: 
-                finding_dict["confidence"] = "LOW"
-                verified.append(finding_dict)
         except Exception as e:
             logger.error(f"Entity verification API error: {e}")
             verified.append({
                 "result": result,
                 "match": None,
                 "confidence": "LOW",
+                "confidence_band": "PROBABLE",
                 "reason": f"API error: {str(e)}"
             })
 
@@ -489,7 +539,7 @@ async def score_sector_sentiment(state: ResearchState) -> ResearchState:
     sentiment_prompt = f"""You are a financial sector sentiment analyst specialising in Indian corporate credit.
 
 Score the regulatory and macroeconomic sentiment for the following company's sector
-based on the search results below.
+based on the search results below. Score ONLY the 5 most relevant articles.
 
 COMPANY: {state['company_name']}
 INDUSTRY: {state.get('industry', 'Unknown')}
@@ -498,9 +548,10 @@ SEARCH RESULTS:
 {articles_text}
 
 SCORING INSTRUCTIONS:
-1. Score each article individually on a scale of -1.0 to +1.0
+1. Pick the 5 most relevant articles. Score each on -1.0 to +1.0
 2. Return the weighted average as the final score
 3. Weight articles about the specific company more heavily than general sector news
+4. Keep each reason to maximum 15 words
 
 MANDATORY INDIAN REGULATORY SEVERITY MAPPINGS — these override sentiment analysis:
 The following events MUST result in a score of -1.0 regardless of context:
@@ -522,7 +573,7 @@ POSITIVE SIGNALS (score toward +1.0):
 Return ONLY this JSON, nothing else:
 {{
   "individual_scores": [
-    {{"title": "article title", "score": 0.0, "reason": "one sentence"}}
+    {{"title": "short title", "score": 0.0, "reason": "max 15 words"}}
   ],
   "weighted_average": 0.0,
   "sentiment_label": "HEADWIND" or "NEUTRAL" or "TAILWIND",
@@ -551,21 +602,24 @@ Sentiment label mapping:
     try:
         response = await client.messages.create(
             model=CLAUDE_RESEARCH_AGENT_MODEL,
-            max_tokens=600,
+            max_tokens=2500,
             messages=[{"role": "user", "content": sentiment_prompt}]
         )
         raw_output = response.content[0].text
         
-        try:
-            if "```json" in raw_output:
-                json_str = raw_output.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw_output:
-                json_str = raw_output.split("```")[1].split("```")[0].strip()
-            else:
-                json_str = raw_output.strip()
-            parsed = json.loads(json_str)
-        except json.JSONDecodeError:
-            raise ValueError(f"Failed to parse Claude JSON output: {raw_output}")
+        parsed = _safe_parse_json(raw_output)
+        if not parsed:
+            # Fallback: try to extract key fields via regex
+            import re
+            wa_match = re.search(r'"weighted_average"\s*:\s*([\-0-9.]+)', raw_output)
+            sl_match = re.search(r'"sentiment_label"\s*:\s*"(\w+)"', raw_output)
+            parsed = {
+                "weighted_average": float(wa_match.group(1)) if wa_match else 0.0,
+                "sentiment_label": sl_match.group(1) if sl_match else "NEUTRAL",
+                "individual_scores": [],
+                "key_signals_found": [],
+                "mandatory_override_triggered": False
+            }
             
         score = float(parsed.get("weighted_average", 0.0))
         # Clamp to [-1.0, +1.0]
@@ -657,7 +711,9 @@ Respond ONLY with this JSON:
   "litigation_detail": "specific case details if found, else null",
   "sector_risk": "TAILWIND" | "NEUTRAL" | "HEADWIND",
   "sector_reason": "one line",
-  "key_findings": ["finding 1", "finding 2"],
+  "key_findings": [
+    {{"severity": "CRITICAL|HIGH|MEDIUM|LOW", "finding": "one line description", "source_url": "url or null", "is_verified": true}}
+  ],
   "sources": ["url1", "url2"],
   "sector_sentiment_score": {state.get('sector_sentiment_score', 0.0)}
 }}"""
@@ -673,20 +729,23 @@ Respond ONLY with this JSON:
         # Raw text from Claude
         raw_output = response.content[0].text
         
-        # safely parse JSON
-        try:
-            # Often LLMs wrap JSON in markdown markdown blocks
-            if "```json" in raw_output:
-                json_str = raw_output.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw_output:
-                json_str = raw_output.split("```")[1].split("```")[0].strip()
-            else:
-                json_str = raw_output.strip()
-                
-            parsed_json = json.loads(json_str)
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse Claude JSON output: {raw_output}")
-            parsed_json = {"error": "Failed to parse JSON", "raw_output": raw_output}
+        parsed_json = _safe_parse_json(raw_output)
+        if not parsed_json:
+            logger.error(f"Failed to parse Claude JSON output: {raw_output[:500]}")
+            # Regex fallback for key fields
+            import re
+            pr = re.search(r'"promoter_risk"\s*:\s*"(\w+)"', raw_output)
+            lr = re.search(r'"litigation_risk"\s*:\s*"(\w+)"', raw_output)
+            sr = re.search(r'"sector_risk"\s*:\s*"(\w+)"', raw_output)
+            ss = re.search(r'"sector_sentiment_score"\s*:\s*([\-0-9.]+)', raw_output)
+            parsed_json = {
+                "promoter_risk": pr.group(1) if pr else "LOW",
+                "litigation_risk": lr.group(1) if lr else "NONE",
+                "sector_risk": sr.group(1) if sr else "NEUTRAL",
+                "sector_sentiment_score": float(ss.group(1)) if ss else 0.0,
+                "key_findings": [],
+                "sources": []
+            }
             
         return {"classification": parsed_json}
         
@@ -759,6 +818,16 @@ research_graph = workflow.compile()
 async def execute_research_graph(job_id: str, request: ResearchRequest):
     start_time = time.time()
     
+    # Ensure the job entry exists in the jobs dict
+    if job_id not in jobs:
+        jobs[job_id] = {
+            "status": "queued",
+            "current_step": "queued",
+            "request_data": request.model_dump(),
+            "result": None,
+            "risk_signals": []
+        }
+    
     try:
         jobs[job_id]["status"] = "running"
         jobs[job_id]["current_step"] = "initializing"
@@ -788,10 +857,10 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
             "classification": {}
         }
         
-        # Enforce 30 second strict timeout on the entire graph
+        # Enforce 90 second strict timeout on the entire graph
         final_state = await asyncio.wait_for(
             research_graph.ainvoke(initial_state),
-            timeout=30.0
+            timeout=90.0
         )
         
         jobs[job_id]["status"] = "completed"
@@ -800,6 +869,36 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
         final_classification = final_state.get("classification", {})
         jobs[job_id]["result"] = final_classification
         jobs[job_id]["risk_signals"] = final_state.get("risk_signals", [])
+
+        # Extract raw search results as news_articles for frontend display
+        news_articles = []
+        for category, results_list in final_state.get("search_results", {}).items():
+            for r in results_list:
+                news_articles.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "snippet": r.get("content", "") or r.get("snippet", ""),
+                    "category": category,
+                })
+        for r in final_state.get("escalation_results", []):
+            news_articles.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("snippet", "") or r.get("content", ""),
+                "category": "escalation",
+            })
+        final_classification["news_articles"] = news_articles
+
+        # Pass rejected findings (name collisions) so frontend can show noise-filtered section
+        final_classification["rejected_findings"] = [
+            {
+                "title": rf.get("result", {}).get("title", ""),
+                "url": rf.get("result", {}).get("url", ""),
+                "reason": rf.get("reason", ""),
+                "confidence_band": rf.get("confidence_band", "DISCARDED"),
+            }
+            for rf in final_state.get("rejected_findings", [])
+        ]
         
         # Update cache
         cache_key = request.company_name.lower().strip()
@@ -831,10 +930,10 @@ async def execute_research_graph(job_id: str, request: ResearchRequest):
         )
         
     except asyncio.TimeoutError:
-        logger.error(f"Job {job_id} failed: Timed out after 30 seconds")
+        logger.error(f"Job {job_id} failed: Timed out after 90 seconds")
         jobs[job_id]["status"] = "timeout"
         jobs[job_id]["current_step"] = "killed"
-        jobs[job_id]["result"] = {"error": "Research task exceeded 30-second timeout limit"}
+        jobs[job_id]["result"] = {"error": "Research task exceeded 90-second timeout limit"}
     except Exception as e:
         logger.error(f"Job {job_id} failed: {e}")
         jobs[job_id]["status"] = "failed"

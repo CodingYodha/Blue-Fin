@@ -3,7 +3,6 @@ import { useParams, Link } from "react-router-dom";
 import { createSSEConnection } from "../api/client.js";
 import PipelineProgress from "../components/PipelineProgress.jsx";
 import ResultsDashboard from "../components/ResultsDashboard.jsx";
-import OfficerNotesPanel from "../components/OfficerNotesPanel.jsx";
 
 export default function AnalysisPage() {
   const { jobId } = useParams();
@@ -93,21 +92,18 @@ export default function AnalysisPage() {
 
   return (
     <div className="page-enter">
-      <ResultsDashboard result={result} activeTab={activeTab} onTabChange={setActiveTab} jobId={jobId} />
-      <div className="container" style={{ paddingBottom: "48px" }}>
-        <hr className="divider" style={{ marginBottom: 0 }} />
-        <OfficerNotesPanel
-          jobId={jobId}
-          currentScore={result.score_breakdown.final_score}
-          currentDecision={result.score_breakdown.decision}
-          onScoreUpdate={(newScore, newDecision, delta) => {
-            setResult((prev) => ({
-              ...prev,
-              score_breakdown: { ...prev.score_breakdown, final_score: newScore, decision: newDecision },
-            }));
-          }}
-        />
-      </div>
+      <ResultsDashboard 
+        result={result} 
+        activeTab={activeTab} 
+        onTabChange={setActiveTab} 
+        jobId={jobId}
+        onScoreUpdate={(newScore, newDecision, delta) => {
+          setResult((prev) => ({
+            ...prev,
+            score_breakdown: { ...prev.score_breakdown, final_score: newScore, decision: newDecision },
+          }));
+        }}
+      />
     </div>
   );
 }

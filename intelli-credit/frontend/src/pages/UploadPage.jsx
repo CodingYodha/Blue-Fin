@@ -7,14 +7,23 @@ import { useAuth } from "../context/AuthContext.jsx";
 
 const FILE_ZONES = [
   { fileType: "annual_report", label: "Annual Report", description: "Digital or scanned PDF", acceptedFormats: ".pdf", required: true },
-  { fileType: "gst_filing", label: "GST Filings", description: "GSTR-1, GSTR-2A, GSTR-3B", acceptedFormats: ".csv,.xlsx", required: true },
-  { fileType: "bank_statement", label: "Bank Statement", description: "12–24 months CSV", acceptedFormats: ".csv", required: true },
+  { fileType: "gst_3b", label: "GSTR-3B", description: "Monthly summary return", acceptedFormats: ".csv,.xlsx", required: true },
+  { fileType: "gst_2a", label: "GSTR-2A", description: "Auto-populated inward supplies", acceptedFormats: ".csv,.xlsx", required: false, fraudCritical: true },
+  { fileType: "bank_statement", label: "Bank Statement", description: "12–24 months CSV/XLSX", acceptedFormats: ".csv,.xlsx", required: true },
+  { fileType: "gst_1", label: "GSTR-1", description: "Outward supply return", acceptedFormats: ".csv,.xlsx", required: false },
   { fileType: "itr", label: "ITR Filing", description: "Income Tax Return PDF", acceptedFormats: ".pdf", required: false },
   { fileType: "mca", label: "MCA Filing", description: "Director & shareholding data", acceptedFormats: ".pdf", required: false },
 ];
 
-const REQUIRED_KEYS = ["annual_report", "gst_filing", "bank_statement"];
-const LABELS = { annual_report: "Annual Report", gst_filing: "GST Filing", bank_statement: "Bank Statement" };
+const REQUIRED_KEYS = ["annual_report", "gst_3b", "bank_statement"];
+const LABELS = { annual_report: "Annual Report", gst_3b: "GSTR-3B", bank_statement: "Bank Statement" };
+
+function computeFraudCoverage(files) {
+  if (!files.gst_3b) return 20;
+  if (!files.gst_2a) return 50;
+  if (!files.gst_1) return 85;
+  return 100;
+}
 
 export default function UploadPage() {
   const navigate = useNavigate();
@@ -26,6 +35,7 @@ export default function UploadPage() {
 
   const uploadedCount = Object.keys(files).length;
   const requiredDone = REQUIRED_KEYS.filter((k) => files[k]).length;
+  const fraudCoverage = computeFraudCoverage(files);
 
   function handleFileSelect(fileType, file) {
     setFiles((prev) => {
@@ -73,8 +83,9 @@ export default function UploadPage() {
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
-          justifyContent: "space-between",
-          padding: "48px",
+          justifyContent: "flex-start",
+          gap: "64px",
+          padding: "32px 48px",
           borderRight: "1px solid var(--border)",
           position: "relative",
           overflow: "hidden",
@@ -82,7 +93,7 @@ export default function UploadPage() {
         }}
       >
         <div>
-          <div className="eyebrow" style={{ marginBottom: "32px" }}>
+          <div className="eyebrow" style={{ marginBottom: "24px" }}>
             New Analysis
           </div>
           <h1 style={{ fontSize: "clamp(1.6rem, 3vw, 2.2rem)", marginBottom: "16px" }}>
@@ -195,7 +206,7 @@ export default function UploadPage() {
           <span className="badge badge-danger" style={{ fontSize: "10px" }}>{requiredDone} / 3</span>
         </div>
 
-        <div className="grid grid-3" style={{ gap: "12px", marginBottom: "32px" }}>
+        <div className="grid grid-3" style={{ gap: "12px", marginBottom: "20px" }}>
           {FILE_ZONES.filter((z) => z.required).map((zone) => (
             <FileDropZone
               key={zone.fileType}
@@ -204,6 +215,34 @@ export default function UploadPage() {
               onFileSelect={(f) => handleFileSelect(zone.fileType, f)}
             />
           ))}
+        </div>
+
+        {/* Fraud Coverage Indicator */}
+        <div
+          className="card flex items-center gap-md"
+          style={{
+            padding: "12px 16px",
+            marginBottom: "32px",
+            borderColor: fraudCoverage === 100 ? "rgba(34,197,94,0.3)" : fraudCoverage >= 85 ? "rgba(59,130,246,0.3)" : "rgba(234,179,8,0.3)",
+            background: fraudCoverage === 100 ? "var(--success-subtle)" : fraudCoverage >= 85 ? "rgba(59,130,246,0.05)" : "var(--warning-subtle)",
+          }}
+        >
+          <div style={{ flex: 1 }}>
+            <div className="flex items-center gap-sm" style={{ marginBottom: "6px" }}>
+              <span className="label">Fraud Check Coverage</span>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: fraudCoverage === 100 ? "var(--success)" : fraudCoverage >= 85 ? "var(--accent)" : "var(--warning)" }}>
+                {fraudCoverage}%
+              </span>
+            </div>
+            <div className="progress-track" style={{ height: "4px" }}>
+              <div className="progress-fill" style={{ width: `${fraudCoverage}%`, background: fraudCoverage === 100 ? "var(--success)" : fraudCoverage >= 85 ? "var(--accent)" : "var(--warning)" }} />
+            </div>
+            {fraudCoverage < 85 && (
+              <p style={{ fontSize: "11px", color: "var(--warning)", marginTop: "6px" }}>
+                {!files.gst_2a ? "Upload GSTR-2A to enable ITC mismatch fraud check (+35% coverage)" : "Upload GSTR-1 to enable HSN anomaly check (+15% coverage)"}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Section — Optional */}

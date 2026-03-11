@@ -77,21 +77,39 @@ export async function listJobs() {
 export function createSSEConnection(jobId, onEvent) {
   const url = BASE_URL + "/api/analysis/" + jobId + "/stream";
   const source = new EventSource(url);
+  let connected = false;
+  let done = false;
+
+  source.onopen = () => {
+    connected = true;
+  };
 
   source.onmessage = (e) => {
     try {
       const parsed = JSON.parse(e.data);
       onEvent(parsed);
+
+      // If server sent complete or error, we're done — close cleanly
+      if (parsed.type === "complete" || parsed.type === "error") {
+        done = true;
+        source.close();
+      }
     } catch (err) {
       console.error("SSE parse error", err);
     }
   };
 
   source.onerror = () => {
+    source.close();
+    // Don't fire error if we already received a terminal event
+    if (done) return;
+
     onEvent({
       type: "error",
       stage: "SSE",
-      message: "Connection lost",
+      message: connected
+        ? "Connection to pipeline lost. Please try again."
+        : "Unable to connect to analysis pipeline. Check that the backend is running.",
       percent: 0,
     });
   };

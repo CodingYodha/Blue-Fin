@@ -153,19 +153,29 @@ async def retrieve_chunks(
 
     search_filter = Filter(must=must_conditions)
 
-    # Step 3: Search Qdrant
+    # Step 3: Search Qdrant (try query_points first, fall back to search)
     client = get_client()
-    results = client.search(
-        collection_name=COLLECTION_NAME,
-        query_vector=vector,
-        query_filter=search_filter,
-        limit=top_k,
-        with_payload=True,
-    )
+    if hasattr(client, "query_points"):
+        response = client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=vector,
+            query_filter=search_filter,
+            limit=top_k,
+            with_payload=True,
+        )
+        hits = response.points
+    else:
+        hits = client.search(
+            collection_name=COLLECTION_NAME,
+            query_vector=vector,
+            query_filter=search_filter,
+            limit=top_k,
+            with_payload=True,
+        )
 
     # Step 4: Convert to RetrievedChunk
     chunks: List[RetrievedChunk] = []
-    for hit in results:
+    for hit in hits:
         payload = hit.payload or {}
         chunks.append(
             RetrievedChunk(

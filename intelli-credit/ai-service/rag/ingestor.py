@@ -331,10 +331,20 @@ async def ingest_all_documents(
     Returns:
         List of IngestResult, one per doc_type attempted.
     """
-    # Filter and order by priority
-    ordered = [dt for dt in _DOC_TYPE_ORDER if dt in doc_types]
-    # Include any remaining doc_types not in the standard order
+    # Normalize new GST slot names to the chunk-level doc_type used by Go parser
+    _GST_ALIASES = {"gst_3b": "gst_filing", "gst_2a": "gst_filing", "gst_1": "gst_filing"}
+    normalized = []
+    seen = set()
     for dt in doc_types:
+        mapped = _GST_ALIASES.get(dt, dt)
+        if mapped not in seen:
+            normalized.append(mapped)
+            seen.add(mapped)
+
+    # Filter and order by priority
+    ordered = [dt for dt in _DOC_TYPE_ORDER if dt in normalized]
+    # Include any remaining doc_types not in the standard order
+    for dt in normalized:
         if dt not in ordered and dt != "bank_statement":
             ordered.append(dt)
 

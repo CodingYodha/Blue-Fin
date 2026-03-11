@@ -208,45 +208,59 @@ async def link_transactions_to_graph(
         TransactionLinkResult with counts of links created.
     """
     import asyncio
-    from .neo4j_client import COMPANY, PAID_TO
+
+    from .graph_store import COMPANY, PAID_TO, get_graph, save_graph
 
     confirmed_links = 0
     probable_links = 0
 
     def _write_links():
         nonlocal confirmed_links, probable_links
+        G = get_graph()
 
-        with driver.session() as session:
-            for entity_name in entity_extractions:
-                matches = find_entity_in_transactions(
-                    entity_name, transaction_descriptions
-                )
+        for entity_name in entity_extractions:
+            matches = find_entity_in_transactions(
+                entity_name, transaction_descriptions
+            )
 
-                for match in matches:
-                    confidence_str = match.confidence.value
+            for match in matches:
+                confidence_str = match.confidence.value
+                matched_name = match.matched_description
 
-                    session.run(
-                        f"MERGE (src:{COMPANY} {{name: $entity_name}}) "
-                        f"MERGE (dst:{COMPANY} {{name: $matched_name}}) "
-                        f"MERGE (src)-[r:{PAID_TO}]->(dst) "
-                        f"SET r.confidence = $confidence, "
-                        f"    r.matched_via = 'fuzzy', "
-                        f"    r.fuzzy_score = $score, "
-                        f"    r.raw_description = $raw_desc, "
-                        f"    r.job_id = $job_id, "
-                        f"    r.written_at = datetime()",
-                        entity_name=entity_name,
-                        matched_name=match.matched_description,
-                        confidence=confidence_str,
-                        score=match.score,
-                        raw_desc=match.matched_description,
-                        job_id=job_id,
-                    )
+                # Ensure source and destination exist in NetworkX
+                if not G.has_node(entity_name):
+                    G.add_node(entity_name, labels=[COMPANY], name=entity_name)
+                if not G.has_node(matched_name):
+                    G.add_node(matched_name, labels=[COMPANY], name=matched_name)
 
+                # Add the PAID_TO edge
+                props = {
+                    "confidence": confidence_str,
+                    "matched_via": "fuzzy",
+                    "fuzzy_score": match.score,
+                    "raw_description": matched_name,
+                    "job_id": job_id,
+                    "written_at": "datetime()", # We can use a real time here, but strings work
+                    "type": PAID_TO
+                }
+                
+                # Check for existing edge to prevent duplicates
+                is_new = True
+                if G.has_edge(entity_name, matched_name):
+                    for key, data in G[entity_name][matched_name].items():
+                        if data.get("type") == PAID_TO and data.get("raw_description") == matched_name:
+                            is_new = False
+                            break
+                            
+                if is_new:
+                    G.add_edge(entity_name, matched_name, **props)
                     if match.confidence == MatchConfidence.CONFIRMED_MATCH:
                         confirmed_links += 1
                     else:
                         probable_links += 1
+                        
+        # Save graph after adding links
+        save_graph()
 
     await asyncio.to_thread(_write_links)
 

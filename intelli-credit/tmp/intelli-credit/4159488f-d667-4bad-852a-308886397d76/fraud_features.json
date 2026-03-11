@@ -1,0 +1,17 @@
+{
+  "job_id": "4159488f-d667-4bad-852a-308886397d76",
+  "gst_bank_variance": 0,
+  "max_monthly_variance": 0,
+  "variance_months": 0,
+  "monthly_variances": [],
+  "concentration_risk": 0,
+  "concentration_party": "",
+  "circular_txn_count": 0,
+  "circular_txn_amount": 0,
+  "total_bank_credits": 0,
+  "total_gst_turnover": 0,
+  "risk_level": "LOW",
+  "flags": [],
+  "status": "partial",
+  "error": "no bank statement or GST data found"
+}

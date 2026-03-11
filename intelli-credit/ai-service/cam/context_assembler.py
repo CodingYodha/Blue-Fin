@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
-from ml_core.model_loader import get_sector_config
+from ml_core.model_loader import get_sector_config, load_artifacts
 
 from utils import validate_job_id
 
@@ -22,6 +22,7 @@ class CAMContext:
     # ML Scores
     final_score: float
     layer1_score: float
+    layer2_score: float
     ml_decision: str
     loan_limit_crore: float
     interest_rate_pct: float
@@ -58,6 +59,7 @@ class CAMContext:
     related_party_flag: int
     related_party_details: List[dict]
     din_disqualification: int
+    din_details: Dict[str, Any]
     governance_flag: int
     sarfaesi_flag: int
 
@@ -144,16 +146,21 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
     officer_notes = _safe_load(officer_notes_path)
 
     # COMPANY IDENTITY
-    company_name    = ocr.get("entity_extraction", {}).get("company_name", "Unknown")
-    company_cin     = ocr.get("entity_extraction", {}).get("cin", "")
-    sector          = ocr.get("entity_extraction", {}).get("industry", "")
-    promoter_names  = ocr.get("entity_extraction", {}).get("promoters", [])
+    _ent = ocr.get("entity_extraction") or {}
+    company_name    = _ent.get("company_name", "Unknown")
+    company_cin     = _ent.get("cin", "")
+    sector          = _ent.get("industry", "")
+    _raw_promoters  = _ent.get("promoters") or []
+    promoter_names  = [
+        p.get("name", str(p)) if isinstance(p, dict) else str(p)
+        for p in _raw_promoters
+    ]
     try:
         loan_amount_requested = float(ocr.get("loan_amount_crore", 0.0))
     except:
         loan_amount_requested = 0.0
         
-    sector_config = get_sector_config(sector)
+    sector_config = get_sector_config(sector, load_artifacts())
 
     # ML SCORING OUTPUTS
     final_score           = scoring.get("final_score", 0.0)
@@ -175,7 +182,7 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
     shap_by_model         = scoring.get("shap_by_model", {})
 
     # FINANCIAL DATA
-    fin = rag.get("financial_summary", {})
+    fin = rag.get("financial_summary") or {}
     financial_figures = {
         "revenue_crore":       _cf(fin, "revenue", "fy_current"),
         "revenue_prev_crore":  _cf(fin, "revenue", "fy_previous"),
@@ -191,16 +198,19 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
     }
 
     # QUALITATIVE SIGNALS
-    qs = rag.get("qualitative_signals", {})
-    auditor_qualified     = qs.get("auditor_qualification", {}).get("has_qualification", False)
-    auditor_qualification_text = qs.get("auditor_qualification", {}).get("qualification_text", "")
+    qs = rag.get("qualitative_signals") or {}
+    _aud = qs.get("auditor_qualification") or {}
+    auditor_qualified     = _aud.get("has_qualification", False)
+    auditor_qualification_text = _aud.get("qualification_text", "")
     going_concern         = qs.get("going_concern_flag", False)
-    litigation_list       = qs.get("litigation_disclosures", [])
-    covenant_terms        = rag.get("covenant_and_collateral", {}).get("covenants", [])
-    collateral_items      = rag.get("covenant_and_collateral", {}).get("collateral", [])
-    rating_action         = rag.get("rating_intelligence", {}).get("rating_action", "")
-    rating_rationale      = rag.get("rating_intelligence", {}).get("rationale_summary", "")
-    current_rating        = rag.get("rating_intelligence", {}).get("current_rating", "NR")
+    litigation_list       = qs.get("litigation_disclosures") or []
+    _cov = rag.get("covenant_and_collateral") or {}
+    covenant_terms        = _cov.get("covenants") or []
+    collateral_items      = _cov.get("collateral") or []
+    _rat = rag.get("rating_intelligence") or {}
+    rating_action         = _rat.get("rating_action", "")
+    rating_rationale      = _rat.get("rationale_summary", "")
+    current_rating        = _rat.get("current_rating", "NR")
 
     # ENTITY GRAPH FINDINGS
     related_party_flag    = entity.get("related_party_anomaly_flag", 0)
@@ -247,14 +257,14 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
     )
 
     active_legal_cases = [
-        f for f in verified_findings 
-        if "NCLT" in f.get("finding", "").upper()
+        f for f in verified_findings if isinstance(f, dict)
+        and "NCLT" in f.get("finding", "").upper()
     ]
 
     stress_summary = {
         k: v for k, v in stress_tests.items() if not k.startswith("_")
     }
-    fragile_note = stress_tests.get("_meta", {}).get("fragile_note", None)
+    fragile_note = (stress_tests.get("_meta") or {}).get("fragile_note", None)
 
     return CAMContext(
         company_name=company_name,
@@ -264,6 +274,7 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
         loan_amount_requested=loan_amount_requested,
         final_score=final_score,
         layer1_score=layer1_score,
+        layer2_score=layer2_score,
         ml_decision=ml_decision,
         loan_limit_crore=loan_limit_crore,
         interest_rate_pct=interest_rate_pct,
@@ -294,6 +305,7 @@ async def assemble_cam_context(job_id: str) -> CAMContext:
         related_party_flag=related_party_flag,
         related_party_details=related_party_details,
         din_disqualification=din_disqualification,
+        din_details=din_details,
         governance_flag=governance_flag,
         sarfaesi_flag=sarfaesi_flag,
         promoter_risk=promoter_risk,

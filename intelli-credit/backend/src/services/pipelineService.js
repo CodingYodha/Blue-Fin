@@ -152,7 +152,7 @@ async function runPipeline(jobId) {
           percent,
         });
 
-        const filePath = `${tmpPath}/${pdfFile.original_name}`;
+        const filePath = `${tmpPath}/${pdfFile.file_type}__${pdfFile.original_name}`;
 
         // Trigger background processing
         await axios.post(
@@ -201,8 +201,8 @@ async function runPipeline(jobId) {
     sendEvent(jobId, {
       type: "progress",
       stage,
-      message: entities.borrower_name
-        ? `NER complete — extracted entity: ${entities.borrower_name}`
+      message: entities.company_name
+        ? `NER complete — extracted entity: ${entities.company_name}`
         : "Entity extraction complete (from document processing pipeline).",
       percent,
     });
@@ -222,8 +222,10 @@ async function runPipeline(jobId) {
         percent: 38,
       });
 
-      // Determine doc_types from uploaded files
-      const docTypes = [...new Set(job.files.map((f) => f.file_type))];
+      // Determine doc_types from uploaded files — filter to valid RAG types
+      const VALID_RAG_DOC_TYPES = new Set(["annual_report", "rating_report", "legal_notice", "gst_filing", "gst_3b", "gst_2a", "gst_1"]);
+      const docTypes = [...new Set(job.files.map((f) => f.file_type))].filter(t => VALID_RAG_DOC_TYPES.has(t));
+      if (docTypes.length === 0) docTypes.push("annual_report"); // fallback
 
       await axios.post(
         `${config.aiServiceUrl}/api/v1/rag/ingest`,
@@ -285,7 +287,7 @@ async function runPipeline(jobId) {
       });
 
       const borrowerName =
-        entities.borrower_name || job.company_name || "Unknown";
+        entities.company_name || job.company_name || "Unknown";
       const entityExtractionPath = `${tmpPath}/ocr_output.json`;
 
       // Trigger background graph build
@@ -438,30 +440,98 @@ async function runPipeline(jobId) {
     stage = "COMPLETE";
     percent = 100;
 
-    // Build score_breakdown from scoring result
+    // Build score_breakdown from scoring result — keys must match frontend
     const scoreBreakdown = {
       final_score: scoringResult.final_score,
       decision: scoringResult.decision,
       loan_limit_crore: scoringResult.loan_limit_crore,
       interest_rate_pct: scoringResult.interest_rate_pct,
+      interest_rate_str: scoringResult.interest_rate_pct ? `${scoringResult.interest_rate_pct}%` : null,
       decision_reason: scoringResult.decision_reason,
-      layer1_score: scoringResult.layer1_score,
-      layer2_score: scoringResult.layer2_score,
-      score_financial_health: scoringResult.score_financial_health,
-      score_credit_behaviour: scoringResult.score_credit_behaviour,
-      score_external_risk: scoringResult.score_external_risk,
-      score_text_signals: scoringResult.score_text_signals,
+      layer1_rule_based: scoringResult.layer1_score,
+      layer2_ml_refinement: scoringResult.capped_deviation ?? (scoringResult.final_score - scoringResult.layer1_score),
+      model_1_financial_health: scoringResult.weighted_financial_health ?? scoringResult.score_financial_health,
+      model_2_credit_behaviour: scoringResult.weighted_credit_behaviour ?? scoringResult.score_credit_behaviour,
+      model_3_external_risk: scoringResult.weighted_external_risk ?? scoringResult.score_external_risk,
+      model_4_text_risk: scoringResult.weighted_text_signals ?? scoringResult.score_text_signals,
+      confidence: scoringResult.distribution_anomaly ? "ANOMALY_CAPPED" : "HIGH",
     };
 
-    // Build SHAP values array from scoring result
-    const shapValues = scoringResult.shap_drivers || [];
+    // Build SHAP values array — map AI service format to frontend format
+    const shapValues = (scoringResult.shap_drivers || []).map((s) => ({
+      feature: s.human_label || s.feature,
+      value: s.shap_value,
+      impact: -(s.shap_value || 0), // flip: positive SHAP = risk-increasing = negative impact on score
+      source: s.feature,
+    }));
 
     // Convert stress test scenarios to array format for frontend
-    const stressResultsArray = stressResults.scenarios
-      ? Object.values(stressResults.scenarios)
-      : Array.isArray(stressResults)
-        ? stressResults
-        : [];
+    const baseDecision = scoringResult.decision;
+    const SCENARIO_KEY_MAP = {
+      revenue_shock: "revenue_shock",
+      rate_hike_200bps: "rate_hike",
+      gst_scrutiny: "gst_scrutiny",
+    };
+    const stressResultsArray = Object.entries(stressResults || {})
+      .filter(([k]) => !k.startsWith("_"))
+      .map(([key, sr]) => ({
+        scenario: SCENARIO_KEY_MAP[key.toLowerCase()] || key.toLowerCase(),
+        flipped: sr.flipped || false,
+        original_decision: baseDecision,
+        stressed_decision: sr.decision,
+        stressed_score: sr.stressed_score,
+        recommendation: sr.action,
+      }));
+
+    // Map entity graph nodes/edges to frontend-expected shape
+    const mappedNodes = (graphResult.nodes || []).map((n) => ({
+      id: n.id,
+      name: n.label || n.name || "Unknown",
+      type: (n.type || "company").toLowerCase(),
+      risk_level: n.is_flagged ? "HIGH" : n.is_borrower ? "MEDIUM" : "LOW",
+      historical_match: n.flag_type === "HISTORICAL_REJECTION_MATCH" || false,
+    }));
+    const mappedEdges = (graphResult.edges || []).map((e) => ({
+      source: e.source,
+      target: e.target,
+      relationship: e.label || e.type,
+      amount_crore: e.properties?.amount_crore || null,
+      is_probable_match: e.properties?.confidence === "PROBABLE_MATCH" || false,
+    }));
+
+    // Map research findings — key_findings may be flat strings, frontend needs objects
+    const rawFindings = researchFindings || {};
+    const mappedKeyFindings = (rawFindings.key_findings || []).map((f, idx) => {
+      if (typeof f === "string") {
+        const text = f.toLowerCase();
+        let severity = "MEDIUM";
+        if (text.includes("nclt") || text.includes("ed ") || text.includes("cbi") || text.includes("fraud") || text.includes("arrest")) severity = "CRITICAL";
+        else if (text.includes("default") || text.includes("npa") || text.includes("downgrad")) severity = "HIGH";
+        else if (text.includes("rating") || text.includes("compliance")) severity = "MEDIUM";
+        else severity = "LOW";
+        return { severity, finding: f, source_url: (rawFindings.sources || [])[idx] || null, is_verified: true };
+      }
+      return f; // already an object
+    });
+    const researchForFrontend = {
+      promoter_risk: rawFindings.promoter_risk || "LOW",
+      litigation_risk: rawFindings.litigation_risk || "NONE",
+      sector_risk: rawFindings.sector_risk || "NEUTRAL",
+      sector_sentiment_score: rawFindings.sector_sentiment_score ?? 0,
+      key_findings: mappedKeyFindings,
+      news_articles: (rawFindings.news_articles || []).map((a) => ({
+        title: a.title || "",
+        url: a.url || "",
+        snippet: (a.snippet || "").slice(0, 300),
+        category: a.category || "",
+      })),
+      rejected_findings: (rawFindings.rejected_findings || []).map((rf) => ({
+        title: rf.title || "",
+        url: rf.url || "",
+        reason: rf.reason || "",
+        confidence_band: rf.confidence_band || "DISCARDED",
+      })),
+    };
 
     const analysisResult = {
       job_id: jobId,
@@ -472,9 +542,9 @@ async function runPipeline(jobId) {
       shap_values: shapValues,
       shap_by_model: scoringResult.shap_by_model || {},
       stress_results: stressResultsArray,
-      entity_nodes: graphResult.nodes || [],
-      entity_edges: graphResult.edges || [],
-      research_findings: researchFindings,
+      entity_nodes: mappedNodes,
+      entity_edges: mappedEdges,
+      research_findings: researchForFrontend,
       officer_notes_applied: false,
       officer_score_delta: 0,
       cam_generated: true,

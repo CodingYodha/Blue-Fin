@@ -1,24 +1,17 @@
 """
-Graph Exporter — produces frontend-ready {nodes, edges} JSON from Neo4j.
-
-=============================================================================
-The Next.js frontend renders an interactive force-directed graph.  This module
-queries Neo4j, deduplicates nodes, cross-references fraud flags from
-entity_fraud_flags.json, and exports a clean GraphExport that the frontend
-can consume directly — no Neo4j knowledge required on the frontend side.
-
-Output:
-  GraphExport → written to /tmp/intelli-credit/{job_id}/entity_graph.json
-=============================================================================
+Graph Exporter — produces frontend-ready {nodes, edges} JSON from NetworkX.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set, Tuple
+
+import networkx as nx
 
 from .schemas import GraphNode, GraphEdge, GraphExport
-from .neo4j_client import (
+from .graph_store import (
+    get_graph,
     COMPANY,
     PERSON,
     LOAN,
@@ -34,16 +27,10 @@ from .neo4j_client import (
 
 logger = logging.getLogger("entity_graph.graph_exporter")
 
-# Shared volume base path
 _BASE_PATH = Path("/tmp/intelli-credit")
 
 
-# =============================================================================
-# Human-readable edge labels
-# =============================================================================
-
 def _edge_label(rel_type: str, props: Dict[str, Any]) -> str:
-    """Generate a human-readable label for an edge."""
     amount = props.get("amount_crore")
     facility = props.get("facility")
     confidence = props.get("confidence")
@@ -73,12 +60,7 @@ def _edge_label(rel_type: str, props: Dict[str, Any]) -> str:
         return rel_type.replace("_", " ").title()
 
 
-# =============================================================================
-# Node type detection
-# =============================================================================
-
 def _detect_node_type(labels: List[str]) -> str:
-    """Determine the node type from Neo4j labels."""
     label_set = {l.upper() for l in labels} if labels else set()
     if PERSON in label_set:
         return PERSON
@@ -86,21 +68,10 @@ def _detect_node_type(labels: List[str]) -> str:
         return APPLICATION
     if LOAN in label_set:
         return LOAN
-    return COMPANY  # default
+    return COMPANY
 
 
-# =============================================================================
-# Fraud flag cross-referencing
-# =============================================================================
-
-def _load_fraud_flags(job_id: str) -> tuple[Set[str], Dict[str, str]]:
-    """
-    Load fraud flags and extract flagged entity names + their flag types.
-
-    Returns:
-        (flagged_names, name_to_flag_type) — sets/dicts of entity names
-        involved in fraud flags.
-    """
+def _load_fraud_flags(job_id: str) -> Tuple[Set[str], Dict[str, str]]:
     fraud_file = _BASE_PATH / job_id / "entity_fraud_flags.json"
     flagged_names: Set[str] = set()
     name_to_flag: Dict[str, str] = {}
@@ -114,7 +85,6 @@ def _load_fraud_flags(job_id: str) -> tuple[Set[str], Dict[str, str]]:
             flag_type = flag.get("flag_type", "")
             evidence = flag.get("evidence", {})
 
-            # Collect all entity names from evidence
             for key in ("director", "supplier", "controller",
                         "circular_entity", "borrower", "rejected_company",
                         "shared_director"):
@@ -123,7 +93,6 @@ def _load_fraud_flags(job_id: str) -> tuple[Set[str], Dict[str, str]]:
                     flagged_names.add(name)
                     name_to_flag[name] = flag_type
 
-            # Suppliers list
             for s in evidence.get("suppliers", []):
                 flagged_names.add(s)
                 name_to_flag[s] = flag_type
@@ -134,189 +103,135 @@ def _load_fraud_flags(job_id: str) -> tuple[Set[str], Dict[str, str]]:
     return flagged_names, name_to_flag
 
 
-# =============================================================================
-# Main export function
-# =============================================================================
-
 async def export_graph_for_ui(
     driver, job_id: str, borrower_name: str
 ) -> GraphExport:
     """
-    Query Neo4j for all nodes/edges connected to this application's borrower,
-    deduplicate, cross-reference fraud flags, and export a clean JSON
-    for the frontend force-directed graph.
-
-    Writes to: /tmp/intelli-credit/{job_id}/entity_graph.json
-
-    Args:
-        driver:        Neo4j driver instance.
-        job_id:        Current job ID.
-        borrower_name: Primary borrower company name.
-
-    Returns:
-        GraphExport with deduplicated nodes and edges.
+    Traverses NetworkX graph to extract 1-hop subgraph around borrower
+    and returns frontend-ready GraphExport.
     """
     import asyncio
-
-    query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}}) "
-        f"OPTIONAL MATCH (borrower)-[r1]->(related:{COMPANY}) "
-        f"OPTIONAL MATCH (p:{PERSON})-[r2:{DIRECTOR_OF}]->(borrower) "
-        f"OPTIONAL MATCH (p)-[r3:{DIRECTOR_OF}]->(related) "
-        f"OPTIONAL MATCH (bank:{COMPANY})-[r4:{LENDER_TO}]->(borrower) "
-        f"OPTIONAL MATCH (borrower)-[r5:{APPLIED_FOR}]->(app:{APPLICATION}) "
-        f"OPTIONAL MATCH (g:{PERSON})-[r6:{GUARANTOR_FOR}]->(loan:{LOAN}) "
-        f"WHERE loan.borrower = $borrower_name "
-        f"RETURN borrower, related, p, bank, app, loan, g, "
-        f"       r1, r2, r3, r4, r5, r6, "
-        f"       labels(borrower) AS borrower_labels, "
-        f"       labels(related) AS related_labels, "
-        f"       labels(p) AS person_labels, "
-        f"       labels(bank) AS bank_labels, "
-        f"       labels(app) AS app_labels, "
-        f"       labels(loan) AS loan_labels, "
-        f"       labels(g) AS guarantor_labels"
-    )
-
-    def _run_query():
-        with driver.session() as session:
-            result = session.run(query, borrower_name=borrower_name)
-            return [record.data() for record in result]
-
-    records = await asyncio.to_thread(_run_query)
-
-    # Load fraud flags
+    
     flagged_names, name_to_flag = _load_fraud_flags(job_id)
 
-    # Deduplicate nodes and edges
-    nodes_by_id: Dict[str, GraphNode] = {}
-    edges_by_id: Dict[str, GraphEdge] = {}
+    def _extract_graph():
+        G = get_graph()
+        
+        # Resolve borrower name (exact match or partial matching like Cypher CONTAINS)
+        resolved_name = borrower_name
+        if not G.has_node(borrower_name):
+            # Try finding unknown placeholder or substring
+            for node in G.nodes():
+                if isinstance(node, str):
+                    if node.startswith("Unknown-") and node.endswith(job_id):
+                        resolved_name = node
+                        break
+                    if borrower_name.lower() in node.lower() and not node.startswith("Unknown-"):
+                        if COMPANY in G.nodes[node].get("labels", []):
+                            resolved_name = node
+                            break
+        
+        local_borrower_name = borrower_name
+        if resolved_name != local_borrower_name:
+            logger.info(f"[{job_id}] Resolved borrower name: '{local_borrower_name}' → '{resolved_name}'")
+            local_borrower_name = resolved_name
+            
+        nodes_by_id: Dict[str, GraphNode] = {}
+        edges_by_id: Dict[str, GraphEdge] = {}
+        
+        if not G.has_node(local_borrower_name):
+            return nodes_by_id, edges_by_id
+            
+        # We need the ego graph with undirected steps = 1, since the Cypher query was:
+        # OPTIONAL MATCH (p)-[:DIRECTOR_OF]->(borrower) etc
+        ego_nodes = set([local_borrower_name])
+        
+        # Traversal logic equivalent to the Cypher MATCH
+        # 1. Outgoing edges from borrower (r1, r5)
+        for target in G.successors(local_borrower_name):
+            ego_nodes.add(target)
+            
+        # 2. Incoming edges to borrower (r2, r4) and their properties
+        for source in G.predecessors(local_borrower_name):
+            ego_nodes.add(source)
+            # 3. If source is a director (r2), we also want where they are director of (r3)
+            # Cypher: MATCH (p:PERSON)-[r3:DIRECTOR_OF]->(related)
+            for key, edge_data in G[source][local_borrower_name].items():
+                if edge_data.get("type") == DIRECTOR_OF:
+                    for related in G.successors(source):
+                        ego_nodes.add(related)
+                        
+        # 4. Guarantors (r6) for LOAN nodes where borrower = borrower_name
+        loan_id = f"loan-{local_borrower_name}"
+        if G.has_node(loan_id):
+            ego_nodes.add(loan_id)
+            for source in G.predecessors(loan_id):
+                for key, edge_data in G[source][loan_id].items():
+                    if edge_data.get("type") == GUARANTOR_FOR:
+                        ego_nodes.add(source)
 
-    def _add_node(node_obj, labels_key: str, record: dict):
-        """Extract and deduplicate a node from a record."""
-        if node_obj is None:
-            return
-        eid = str(node_obj.element_id)
-        if eid in nodes_by_id:
-            return
+        subgraph = G.subgraph(ego_nodes)
+        
+        for node, data in subgraph.nodes(data=True):
+            node_id = str(node)
+            props = dict(data)
+            labels = props.pop("labels", [])
+            node_type = _detect_node_type(labels)
+            
+            # The UI expects 'name' in properties sometimes, so ensure it's there
+            name = props.get("name", props.get("job_id", props.get("borrower", node_id)))
+            
+            is_flagged = name in flagged_names
+            flag_type = name_to_flag.get(name)
+            
+            nodes_by_id[node_id] = GraphNode(
+                id=node_id,
+                label=str(name),
+                type=node_type,
+                is_borrower=(str(name) == local_borrower_name),
+                is_flagged=is_flagged,
+                flag_type=flag_type,
+                properties=_sanitize_props(props)
+            )
 
-        props = dict(node_obj)
-        name = props.get("name", props.get("job_id", props.get("borrower", f"node-{eid}")))
-        labels = record.get(labels_key, [])
-        node_type = _detect_node_type(labels)
+        edge_counter = 0
+        for u, v, key, data in subgraph.edges(keys=True, data=True):
+            props = dict(data)
+            rel_type = props.pop("type", "UNKNOWN")
+            
+            # Only export the specific edges from the Cypher query between these nodes
+            if rel_type not in (DIRECTOR_OF, LENDER_TO, PAID_TO, SUBSIDIARY_OF, GUARANTOR_FOR, APPLIED_FOR, FLAGGED_IN):
+                continue
 
-        is_flagged = name in flagged_names
-        flag_type = name_to_flag.get(name)
+            source_id = str(u)
+            target_id = str(v)
+            edge_id = f"edge-{source_id}-{target_id}-{rel_type}-{key}-{edge_counter}"
+            edge_counter += 1
+            
+            source_name = str(subgraph.nodes[u].get("name", u))
+            target_name = str(subgraph.nodes[v].get("name", v))
+            is_flagged = source_name in flagged_names or target_name in flagged_names
+            
+            edges_by_id[edge_id] = GraphEdge(
+                id=edge_id,
+                source=source_id,
+                target=target_id,
+                type=rel_type,
+                label=_edge_label(rel_type, props),
+                is_flagged=is_flagged,
+                properties=_sanitize_props(props)
+            )
+            
+        return nodes_by_id, edges_by_id
 
-        nodes_by_id[eid] = GraphNode(
-            id=eid,
-            label=str(name),
-            type=node_type,
-            is_borrower=(name == borrower_name),
-            is_flagged=is_flagged,
-            flag_type=flag_type,
-            properties=_sanitize_props(props),
-        )
-
-    def _add_edge(rel_obj):
-        """Extract and deduplicate a relationship from a record."""
-        if rel_obj is None:
-            return
-        eid = str(rel_obj.element_id)
-        if eid in edges_by_id:
-            return
-
-        rel_type = rel_obj.type
-        props = dict(rel_obj)
-        source_id = str(rel_obj.start_node.element_id)
-        target_id = str(rel_obj.end_node.element_id)
-
-        # Check if either end is flagged
-        source_name = dict(rel_obj.start_node).get("name", "")
-        target_name = dict(rel_obj.end_node).get("name", "")
-        is_flagged = source_name in flagged_names or target_name in flagged_names
-
-        edges_by_id[eid] = GraphEdge(
-            id=eid,
-            source=source_id,
-            target=target_id,
-            type=rel_type,
-            label=_edge_label(rel_type, props),
-            is_flagged=is_flagged,
-            properties=_sanitize_props(props),
-        )
-
-    # Process all records
-    for record in records:
-        # Nodes — the raw record from session.run().data() returns dicts,
-        # but we need the actual node objects. Re-query with graph result.
-        pass
-
-    # Re-run with graph result format for proper node/relationship objects
-    def _run_graph_query():
-        with driver.session() as session:
-            result = session.run(query, borrower_name=borrower_name)
-            graph = result.graph()
-            return list(graph.nodes), list(graph.relationships)
-
-    all_nodes, all_rels = await asyncio.to_thread(_run_graph_query)
-
-    # Process nodes
-    for node in all_nodes:
-        eid = str(node.element_id)
-        if eid in nodes_by_id:
-            continue
-
-        props = dict(node)
-        labels = list(node.labels)
-        name = props.get("name", props.get("job_id", props.get("borrower", f"node-{eid}")))
-        node_type = _detect_node_type(labels)
-
-        is_flagged = str(name) in flagged_names
-        flag_type = name_to_flag.get(str(name))
-
-        nodes_by_id[eid] = GraphNode(
-            id=eid,
-            label=str(name),
-            type=node_type,
-            is_borrower=(str(name) == borrower_name),
-            is_flagged=is_flagged,
-            flag_type=flag_type,
-            properties=_sanitize_props(props),
-        )
-
-    # Process relationships
-    for rel in all_rels:
-        eid = str(rel.element_id)
-        if eid in edges_by_id:
-            continue
-
-        rel_type = rel.type
-        props = dict(rel)
-        source_id = str(rel.start_node.element_id)
-        target_id = str(rel.end_node.element_id)
-
-        source_name = str(dict(rel.start_node).get("name", ""))
-        target_name = str(dict(rel.end_node).get("name", ""))
-        is_flagged = source_name in flagged_names or target_name in flagged_names
-
-        edges_by_id[eid] = GraphEdge(
-            id=eid,
-            source=source_id,
-            target=target_id,
-            type=rel_type,
-            label=_edge_label(rel_type, props),
-            is_flagged=is_flagged,
-            properties=_sanitize_props(props),
-        )
-
+    nodes_dict, edges_dict = await asyncio.to_thread(_extract_graph)
+    
     export = GraphExport(
         job_id=job_id,
-        nodes=list(nodes_by_id.values()),
-        edges=list(edges_by_id.values()),
+        nodes=list(nodes_dict.values()),
+        edges=list(edges_dict.values()),
     )
 
-    # Write to disk
     output_dir = _BASE_PATH / job_id
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "entity_graph.json"
@@ -333,9 +248,9 @@ async def export_graph_for_ui(
 
 
 def _sanitize_props(props: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert Neo4j property values to JSON-serializable types."""
     clean = {}
     for k, v in props.items():
+        if k == "labels": continue
         if v is None:
             continue
         if isinstance(v, (str, int, float, bool)):
@@ -345,3 +260,4 @@ def _sanitize_props(props: Dict[str, Any]) -> Dict[str, Any]:
         else:
             clean[k] = str(v)
     return clean
+

@@ -95,7 +95,7 @@ class OfficerNotesResult(BaseModel):
 
 async def call_claude(system: str, user: str, max_tokens: int, temperature: float) -> str:
     llm = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20240620",
+        model_name="claude-sonnet-4-20250514",
         temperature=temperature,
         max_tokens=max_tokens
     )

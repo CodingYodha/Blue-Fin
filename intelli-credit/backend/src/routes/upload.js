@@ -18,7 +18,10 @@ const upload = multer({
 
 const uploadFields = upload.fields([
   { name: "annual_report", maxCount: 1 },
-  { name: "gst_filing", maxCount: 1 },
+  { name: "gst_3b", maxCount: 1 },
+  { name: "gst_2a", maxCount: 1 },
+  { name: "gst_1", maxCount: 1 },
+  { name: "gst_filing", maxCount: 1 }, // backward compat — maps to gst_3b
   { name: "bank_statement", maxCount: 1 },
   { name: "itr", maxCount: 1 },
   { name: "mca", maxCount: 1 },
@@ -44,6 +47,12 @@ router.post("/:jobId", async (c) => {
       });
     });
 
+    // Backward compat: if old client sends "gst_filing", treat as gst_3b
+    if (files.gst_filing && !files.gst_3b) {
+      files.gst_3b = files.gst_filing;
+      delete files.gst_filing;
+    }
+
     const received = [];
 
     for (const [fieldname, fileArr] of Object.entries(files)) {
@@ -57,7 +66,9 @@ router.post("/:jobId", async (c) => {
         );
       }
 
-      const savedPath = saveFileToDisk(jobId, file.buffer, file.originalname);
+      // Prefix filename with slot name so downstream services can identify file type
+      const diskName = `${fieldname}__${file.originalname}`;
+      const savedPath = saveFileToDisk(jobId, file.buffer, diskName);
       const storagePath = await uploadToSupabase(
         jobId,
         savedPath,

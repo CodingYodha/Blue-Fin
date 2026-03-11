@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   company_name TEXT NOT NULL,
   status TEXT DEFAULT 'pending',
   industry TEXT,
+  user_email TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   result JSONB,

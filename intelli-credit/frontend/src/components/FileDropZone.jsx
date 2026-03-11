@@ -3,6 +3,9 @@ import { Upload, X, Check, FileText, AlertCircle } from "lucide-react";
 
 const SYMBOLS = {
   annual_report: { icon: FileText, color: "#f97316" },
+  gst_3b: { icon: FileText, color: "#22c55e" },
+  gst_2a: { icon: FileText, color: "#10b981" },
+  gst_1: { icon: FileText, color: "#34d399" },
   gst_filing: { icon: FileText, color: "#22c55e" },
   bank_statement: { icon: FileText, color: "#3b82f6" },
   itr: { icon: FileText, color: "#eab308" },
@@ -83,13 +86,14 @@ export default function FileDropZone({
       : "dropzone";
 
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div
         className={zoneClass}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={openPicker}
+        style={{ flex: 1, minHeight: "160px", display: "flex", flexDirection: "column", justifyContent: "center", position: "relative" }}
       >
         <input
           id={"file-input-" + fileType}
@@ -100,7 +104,7 @@ export default function FileDropZone({
         />
 
         {file ? (
-          <div className="flex items-center gap-md" style={{ textAlign: "left" }}>
+          <div className="flex items-center gap-md" style={{ textAlign: "left", width: "100%", position: "absolute", left: 0, padding: "0 16px" }}>
             <div
               style={{
                 width: "36px",
@@ -115,16 +119,18 @@ export default function FileDropZone({
             >
               <Check size={18} style={{ color: "var(--success)" }} />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
               <p
-                className="truncate"
                 style={{
                   fontSize: "13px",
-                  fontWeight: 500,
+                  fontWeight: 600,
                   color: "var(--text-primary)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
                 }}
               >
-                {truncate(file.name, 32)}
+                {file.name}
               </p>
               <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
                 {formatSize(file.size)}

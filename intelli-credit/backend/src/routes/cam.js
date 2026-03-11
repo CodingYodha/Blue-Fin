@@ -5,23 +5,56 @@ import { getJob, updateJobStatus } from "../services/jobService.js";
 
 const router = new Hono();
 
+// Download proxy — must be registered before the /:jobId catch-all
+router.get("/:jobId/download/:format", async (c) => {
+  const jobId = c.req.param("jobId");
+  const format = c.req.param("format");
+  if (!["pdf", "docx"].includes(format)) {
+    return c.json({ error: "Valid formats: pdf, docx" }, 400);
+  }
+  try {
+    const resp = await axios.get(
+      `${config.aiServiceUrl}/api/v1/cam/download/${jobId}/${format}`,
+      { responseType: "arraybuffer", timeout: 30000 },
+    );
+    const ct =
+      format === "pdf"
+        ? "application/pdf"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    c.header("Content-Type", ct);
+    const disposition = c.req.query("preview") ? "inline" : "attachment";
+    c.header(
+      "Content-Disposition",
+      `${disposition}; filename="${jobId}_Credit_Memo.${format}"`,
+    );
+    return c.body(resp.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const msg = status === 404 ? `${format.toUpperCase()} not yet available` : "Download failed";
+    return c.json({ error: msg }, status);
+  }
+});
+
 function buildCamResponse(job) {
   const r = job.result;
+  
   // Support both flat cam_text and structured cam_sections
+  // Also check if they are top-level on job.result (from early processing)
   const sections = r.cam_sections || {
-    forensic_accountant: r.cam_text || "",
-    compliance_officer: "",
-    chief_risk_officer: "",
+    forensic_accountant: r.accountant_output?.content || r.cam_text || "",
+    compliance_officer: r.compliance_output?.content || "",
+    chief_risk_officer: r.cro_output?.content || "",
   };
+
   return {
     job_id: job.id,
     company_name: job.company_name,
-    decision: r.score_breakdown?.decision,
-    final_score: r.score_breakdown?.final_score,
+    decision: r.score_breakdown?.decision || r.cro_output?.final_decision,
+    final_score: r.score_breakdown?.final_score || r.final_score,
     cam_sections: sections,
-    citations: r.citations || [],
+    citations: r.citations || r.audit_trail || [],
     structurally_fragile: r.structurally_fragile || false,
-    stress_summary: r.stress_results || [],
+    stress_summary: r.stress_results || r.stress_summary || [],
     generated_at: job.updated_at,
   };
 }
@@ -69,11 +102,18 @@ router.post("/:jobId/regenerate", async (c) => {
     return c.json({ error: "CAM generation timed out" }, 504);
   }
 
+  // Map Python's output keys to what the frontend expects
+  const sections = camData.cam_sections || camData.sections || {
+    forensic_accountant: camData.accountant_output?.content || "",
+    compliance_officer: camData.compliance_output?.content || "",
+    chief_risk_officer: camData.cro_output?.content || "",
+  };
+
   const updatedResult = {
     ...job.result,
     cam_text: camData.cam_text || "",
-    cam_sections: camData.cam_sections || camData.sections || {},
-    citations: camData.citations || job.result.citations || [],
+    cam_sections: sections,
+    citations: camData.citations || camData.audit_trail || job.result.citations || [],
     cam_generated: true,
   };
 

@@ -27,11 +27,7 @@ from deep_learning import (
     ProcessDocumentRequest,
     ProcessDocumentResponse,
 )
-from entity_graph import (
-    create_constraints,
-    close_driver,
-    neo4j_health_check,
-)
+
 from entity_graph.routes import router as entity_graph_router
 from rag import (
     ensure_collection_exists,
@@ -64,8 +60,8 @@ logger = logging.getLogger("ai-service")
 async def lifespan(app: FastAPI):
     """
     FastAPI lifespan context manager.
-    Startup: apply Neo4j constraints, ensure Qdrant collection.
-    Shutdown: close Neo4j driver, close Qdrant client.
+    Startup: ensure Qdrant collection.
+    Shutdown: close Qdrant client.
     """
     # Startup
     logger.info("Starting AI Service...")
@@ -78,11 +74,7 @@ async def lifespan(app: FastAPI):
             logger.error(f"Required environment variable {var} is not set or empty")
             raise RuntimeError(f"Missing required environment variable: {var}")
 
-    try:
-        create_constraints()
-        logger.info("Neo4j constraints applied at startup")
-    except Exception as e:
-        logger.warning(f"Neo4j startup failed (will retry on first request): {e}")
+
 
     try:
         ensure_collection_exists()
@@ -100,7 +92,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down AI Service...")
-    close_driver()
     close_qdrant()
 
 
@@ -147,15 +138,13 @@ BASE_PATH = Path("/tmp/intelli-credit")
 
 @app.get("/health")
 async def health_check():
-    """Liveness probe — includes Neo4j and Qdrant connectivity status."""
-    neo4j_ok = neo4j_health_check()
+    """Liveness probe — includes Qdrant connectivity status."""
     qdrant_ok = qdrant_health_check()
-    all_ok = neo4j_ok and qdrant_ok
+    all_ok = qdrant_ok
     return {
         "status": "ok" if all_ok else "degraded",
         "services": {
             "ai_service": True,
-            "neo4j": neo4j_ok,
             "qdrant": qdrant_ok,
         },
     }

@@ -69,15 +69,22 @@ def get_client() -> QdrantClient:
     """
     Return a module-level Qdrant client singleton.
 
-    Reads QDRANT_HOST and QDRANT_PORT from environment.
-    Defaults: host=qdrant, port=6333.
+    Cloud mode:  set QDRANT_URL + QDRANT_API_KEY  (e.g. https://xxx.cloud.qdrant.io:6333)
+    Local mode:  set QDRANT_HOST + QDRANT_PORT    (default: localhost:6333)
     """
     global _client
     if _client is None:
-        host = os.environ.get("QDRANT_HOST", "qdrant")
-        port = int(os.environ.get("QDRANT_PORT", "6333"))
-        _client = QdrantClient(host=host, port=port)
-        logger.info(f"Qdrant client connected: {host}:{port}")
+        url = os.environ.get("QDRANT_URL", "").strip()
+        api_key = os.environ.get("QDRANT_API_KEY", "").strip()
+
+        if url and api_key:
+            _client = QdrantClient(url=url, api_key=api_key)
+            logger.info(f"Qdrant client connected (cloud): {url}")
+        else:
+            host = os.environ.get("QDRANT_HOST", "localhost")
+            port = int(os.environ.get("QDRANT_PORT", "6333"))
+            _client = QdrantClient(host=host, port=port)
+            logger.info(f"Qdrant client connected (local): {host}:{port}")
     return _client
 
 

@@ -39,7 +39,7 @@ class WriteResult(BaseModel):
     relationships_written: int = Field(
         default=0, description="Count of MERGE relationship operations executed"
     )
-    status: Literal["success", "failed"] = Field(
+    status: Literal["success", "failed", "skipped"] = Field(
         default="success", description="Whether the graph write succeeded"
     )
     error: Optional[str] = Field(

@@ -1,4 +1,5 @@
-import { User, Scale, TrendingUp, TrendingDown, ExternalLink, Gavel, AlertTriangle, BarChart2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { User, Scale, TrendingUp, TrendingDown, ExternalLink, Gavel, AlertTriangle, BarChart2, Newspaper, Filter } from "lucide-react";
 
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
 
@@ -22,31 +23,112 @@ function riskCardStyle(value, type) {
 }
 
 function SentimentGauge({ score }) {
+  const [animPct, setAnimPct] = useState(0);
+
   const clampedScore = Math.max(-1, Math.min(1, score ?? 0));
-  const angleDeg = ((clampedScore + 1) / 2) * 180;
+  const targetPct = (clampedScore + 1) / 2; // 0 to 1
+
+  useEffect(() => {
+    let raf;
+    const start = performance.now();
+    const duration = 1400;
+    function step(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      setAnimPct(ease * targetPct);
+      if (t < 1) raf = requestAnimationFrame(step);
+    }
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [targetPct]);
+
+  const angleDeg = animPct * 180;
   const angleRad = ((180 - angleDeg) * Math.PI) / 180;
   const cx = 100, cy = 100, r = 70;
-  const px = cx + r * Math.cos(angleRad);
-  const py = cy - r * Math.sin(angleRad);
+  const px = cx + (r - 18) * Math.cos(angleRad);
+  const py = cy - (r - 18) * Math.sin(angleRad);
   const gaugeColor = clampedScore < -0.3 ? "#ef4444" : clampedScore > 0.3 ? "#22c55e" : "#eab308";
   const label = clampedScore < -0.3 ? "HEADWIND" : clampedScore > 0.3 ? "TAILWIND" : "NEUTRAL";
 
+  const arcFlag = 0;
+  // Arc path traces the outer radius
+  const arcPx = cx + r * Math.cos(angleRad);
+  const arcPy = cy - r * Math.sin(angleRad);
+  const arcPath = `M 30 100 A 70 70 0 ${arcFlag} 1 ${arcPx.toFixed(1)} ${arcPy.toFixed(1)}`;
+
+  // Generate radial ticks to segment the gauge and add texture
+  const ticks = [];
+  for (let i = 0; i <= 30; i++) {
+    const tAngle = (180 - (i / 30) * 180) * (Math.PI / 180);
+    const innerR = i % 5 === 0 ? r - 20 : r - 12;
+    ticks.push({
+      x1: cx + innerR * Math.cos(tAngle),
+      y1: cy - innerR * Math.sin(tAngle),
+      x2: cx + (r + 2) * Math.cos(tAngle),
+      y2: cy - (r + 2) * Math.sin(tAngle),
+      major: i % 5 === 0
+    });
+  }
+
   return (
     <div className="flex flex-col items-center gap-sm">
-      <svg viewBox="0 0 200 110" style={{ width: "192px" }}>
-        <path d="M 30 100 A 70 70 0 0 1 170 100" fill="none" stroke="var(--bg-elevated)" strokeWidth="10" strokeLinecap="round" />
-        <path d={`M 30 100 A 70 70 0 ${angleDeg > 90 ? 1 : 0} 1 ${px.toFixed(1)} ${py.toFixed(1)}`} fill="none" stroke={gaugeColor} strokeWidth="10" strokeLinecap="round" />
-        <circle cx={px.toFixed(1)} cy={py.toFixed(1)} r="6" fill={gaugeColor} />
-        <text x="20" y="115" fill="#ef4444" fontSize="9">−1.0</text>
-        <text x="162" y="115" fill="#22c55e" fontSize="9">+1.0</text>
+      <svg viewBox="0 0 200 130" style={{ width: "300px" }}>
+        <defs>
+          <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="50%" stopColor="#eab308" />
+            <stop offset="100%" stopColor="#22c55e" />
+          </linearGradient>
+          <filter id="gaugeGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="b" />
+            <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+
+        {/* Outer tech ring segmented */}
+        <path d="M 15 100 A 85 85 0 0 1 185 100" fill="none" stroke="var(--border)" strokeWidth="1" strokeDasharray="4 6" />
+        
+        {/* Background dark track */}
+        <path d="M 30 100 A 70 70 0 0 1 170 100" fill="none" stroke="var(--bg-elevated)" strokeWidth="22" strokeLinecap="butt" />
+
+        {/* Gradient-filled active arc */}
+        <path d={arcPath} fill="none" stroke="url(#gaugeGrad)" strokeWidth="22" strokeLinecap="butt" filter="url(#gaugeGlow)" />
+
+        {/* Active Ticks overlay - this 'cuts' the gradient into segmented blocky charts for a technical look */}
+        {ticks.map((t, i) => (
+          <line key={`cut-${i}`} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="var(--bg-surface)" strokeWidth={t.major ? 3.5 : 2} />
+        ))}
+
+        {/* Pointer Mechanical Needle */}
+        <polygon 
+          points={`${cx - 5},${cy} ${cx + 5},${cy} ${px},${py}`} 
+          fill={gaugeColor} 
+          style={{ filter: "drop-shadow(0px 2px 4px rgba(0,0,0,0.5))" }}
+        />
+        
+        {/* Center Pivot */}
+        <circle cx={cx} cy={cy} r="8" fill="var(--bg-surface)" stroke={gaugeColor} strokeWidth="3" />
+        <circle cx={cx} cy={cy} r="3" fill="var(--text-primary)" />
+
+        {/* Precision HUD Labels */}
+        <text x="30" y="122" fill="#ef4444" fontSize="12" fontWeight="800" fontFamily="var(--font-heading)" textAnchor="middle">−1.0</text>
+        <text x="100" y="24" fill="var(--text-muted)" fontSize="10" fontWeight="700" fontFamily="var(--font-heading)" textAnchor="middle">0.0 (BASE)</text>
+        <text x="170" y="122" fill="#22c55e" fontSize="12" fontWeight="800" fontFamily="var(--font-heading)" textAnchor="middle">+1.0</text>
+        
+        {/* Digital Overlaid Score */}
+        <text x="100" y="80" fill={gaugeColor} fontSize="34" fontWeight="800" fontFamily="var(--font-heading)" textAnchor="middle">
+          {clampedScore >= 0 ? "+" : ""}{clampedScore.toFixed(2)}
+        </text>
       </svg>
-      <p style={{ fontFamily: "var(--font-heading)", fontSize: "1.5rem", fontWeight: 700, color: gaugeColor }}>
-        {clampedScore >= 0 ? "+" : ""}{clampedScore.toFixed(2)}
-      </p>
-      <p style={{ fontSize: "12px", fontWeight: 600, color: gaugeColor }}>{label}</p>
-      <p style={{ color: "var(--text-muted)", fontSize: "12px", textAlign: "center", maxWidth: "280px" }}>
-        Based on Claude AI analysis of recent sector news
-      </p>
+      
+      <div style={{ textAlign: "center", marginTop: "-16px" }}>
+        <p style={{ fontSize: "16px", fontWeight: 800, color: gaugeColor, letterSpacing: "0.2em", textTransform: "uppercase" }}>
+          {label}
+        </p>
+        <p style={{ color: "var(--text-muted)", fontSize: "12px", maxWidth: "280px", marginTop: "4px" }}>
+          Analyzed over 4M+ sector data points
+        </p>
+      </div>
     </div>
   );
 }
@@ -157,6 +239,87 @@ export default function ResearchTab({ findings }) {
           })
         )}
       </div>
+
+      {/* News & Sources Fetched */}
+      {findings.news_articles && findings.news_articles.length > 0 && (
+        <div className="flex flex-col gap-md">
+          <span className="label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Newspaper size={14} /> News & Sources Fetched from Internet
+          </span>
+          {findings.news_articles.map((article, idx) => (
+            <div key={idx} className="card" style={{ padding: "12px 16px" }}>
+              <div className="flex items-start gap-sm">
+                <span
+                  style={{
+                    fontSize: "9px", fontWeight: 600, padding: "2px 6px",
+                    borderRadius: "var(--radius-full)", background: "var(--bg-elevated)",
+                    color: "var(--text-muted)", border: "1px solid var(--border)",
+                    flexShrink: 0, marginTop: "3px", textTransform: "uppercase",
+                  }}
+                >
+                  {(article.category || "").replace(/_/g, " ")}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "4px" }}>
+                    {article.title}
+                  </p>
+                  {article.snippet && (
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                      {article.snippet}
+                    </p>
+                  )}
+                </div>
+                {article.url && (
+                  <a href={article.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, color: "var(--accent)", marginTop: "2px" }}>
+                    <ExternalLink size={14} />
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Noise Filtered — Rejected Findings (name collisions) */}
+      {findings.rejected_findings && findings.rejected_findings.length > 0 && (
+        <div className="flex flex-col gap-md">
+          <span className="label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Filter size={14} /> Noise Filtered — Discarded Name Collisions ({findings.rejected_findings.length})
+          </span>
+          <p style={{ color: "var(--text-muted)", fontSize: "12px", marginTop: "-8px" }}>
+            These search results were automatically discarded by entity verification AI — they refer to different companies with similar names.
+          </p>
+          {findings.rejected_findings.map((rf, idx) => (
+            <div key={idx} className="card" style={{ padding: "10px 16px", opacity: 0.6, borderStyle: "dashed" }}>
+              <div className="flex items-start gap-sm">
+                <span
+                  style={{
+                    fontSize: "9px", fontWeight: 600, padding: "2px 6px",
+                    borderRadius: "var(--radius-full)", background: "var(--bg-elevated)",
+                    color: "var(--text-muted)", border: "1px solid var(--border)",
+                    flexShrink: 0, marginTop: "3px", textTransform: "uppercase",
+                  }}
+                >
+                  {rf.confidence_band || "DISCARDED"}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "2px", textDecoration: "line-through" }}>
+                    {rf.title}
+                  </p>
+                  <p style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic" }}>
+                    Reason: {rf.reason}
+                  </p>
+                </div>
+                {rf.url && (
+                  <a href={rf.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0, color: "var(--text-muted)", marginTop: "2px" }}>
+                    <ExternalLink size={12} />
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

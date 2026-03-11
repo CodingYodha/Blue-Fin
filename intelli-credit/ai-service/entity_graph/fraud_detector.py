@@ -1,32 +1,18 @@
 """
-Fraud Detector — Cypher read queries against Neo4j for fraud pattern detection.
-
-=============================================================================
-Runs AFTER graph_writer.py has written all entities for the current application.
-The graph contains entities from the CURRENT application AND all HISTORICAL
-applications — enabling cross-application fraud detection (the core value of
-replacing NetworkX with Neo4j).
-
-Detected patterns:
-  1. Related-party director overlap (CRITICAL)
-  2. Historical rejection match (HIGH)
-  3. Shell supplier network (HIGH)
-  4. Circular ownership payment (HIGH)
-
-Output:
-  FraudDetectionResult → written to /tmp/intelli-credit/{job_id}/entity_fraud_flags.json
-  (V11 pattern — downstream ML service reads this file, not an HTTP call)
-=============================================================================
+Fraud Detector — NetworkX graph traversals for fraud pattern detection.
 """
 
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
+
+import networkx as nx
 
 from .schemas import FraudFlag, FraudDetectionResult
-from .neo4j_client import (
+from .graph_store import (
+    get_graph,
     COMPANY,
     PERSON,
     APPLICATION,
@@ -38,258 +24,192 @@ from .neo4j_client import (
 
 logger = logging.getLogger("entity_graph.fraud_detector")
 
-# Shared volume base path
 _BASE_PATH = Path("/tmp/intelli-credit")
-
-
-# =============================================================================
-# Severity ranking for comparison
-# =============================================================================
 
 _SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "NONE": 0}
 
 
 def _highest_severity(flags: List[FraudFlag]) -> str:
-    """Return the highest severity across all flags."""
     if not flags:
         return "NONE"
     return max(flags, key=lambda f: _SEVERITY_RANK.get(f.severity, 0)).severity
 
 
 # =============================================================================
-# Fraud Detection Functions
+# Helper logic for extracting edges of a specific type
+# =============================================================================
+
+def _get_edges_by_type(G: nx.MultiDiGraph, u: str, v: str, edge_type: str) -> list:
+    """Helper to find all edge datas between u and v that match a type."""
+    matches = []
+    if G.has_edge(u, v):
+        for key, data in G[u][v].items():
+            if data.get("type") == edge_type:
+                matches.append(data)
+    return matches
+
+
+# =============================================================================
+# Fraud Detection Functions (NetworkX implementations)
 # =============================================================================
 
 def detect_related_party_director_overlap(
-    driver, job_id: str, borrower_name: str
+    G: nx.MultiDiGraph, job_id: str, borrower_name: str
 ) -> Optional[FraudFlag]:
     """
     Detect: A supplier of the borrower shares a director with the borrower.
-    Classic related-party siphoning pattern.
+    Cypher: 
+      MATCH (borrower)-[r:PAID_TO]->(supplier) 
+      MATCH (supplier)<-[:DIRECTOR_OF]-(shared_director) 
+      MATCH (shared_director)-[:DIRECTOR_OF]->(borrower)
     """
-    query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}})"
-        f"-[:{PAID_TO}]->(supplier:{COMPANY}) "
-        f"MATCH (supplier)<-[:{DIRECTOR_OF}]-(shared_director:{PERSON}) "
-        f"MATCH (shared_director)-[:{DIRECTOR_OF}]->(borrower) "
-        f"RETURN shared_director.name AS director, "
-        f"       supplier.name AS supplier, "
-        f"       supplier.transaction_amount_crore AS amount"
-    )
-
-    with driver.session() as session:
-        result = session.run(query, borrower_name=borrower_name)
-        record = result.single()
-
-    if record is None:
+    if not G.has_node(borrower_name):
         return None
+        
+    for supplier in G.successors(borrower_name):
+        paid_edges = _get_edges_by_type(G, borrower_name, supplier, PAID_TO)
+        if not paid_edges:
+            continue
+            
+        # Found a supplier we paid. Now check for shared directors
+        # Directors are predecessors of borrower via DIRECTOR_OF
+        borrower_directors = set()
+        for d in G.predecessors(borrower_name):
+            if _get_edges_by_type(G, d, borrower_name, DIRECTOR_OF):
+                borrower_directors.add(d)
 
-    director = record["director"]
-    supplier = record["supplier"]
-    amount = record["amount"] or 0
+        for d in borrower_directors:
+            if _get_edges_by_type(G, d, supplier, DIRECTOR_OF):
+                # Found overlap
+                amount = max([e.get("amount_crore", 0) for e in paid_edges])
+                
+                logger.warning(
+                    f"[{job_id}] FRAUD: Director overlap — {d} is director of "
+                    f"both {borrower_name} and supplier {supplier}"
+                )
 
-    logger.warning(
-        f"[{job_id}] FRAUD: Director overlap — {director} is director of "
-        f"both {borrower_name} and supplier {supplier}"
-    )
+                return FraudFlag(
+                    flag_type="RELATED_PARTY_DIRECTOR_OVERLAP",
+                    severity="CRITICAL",
+                    score_penalty=-25,
+                    description=(f"{d} is director of both {borrower_name} and its supplier {supplier}. Payment: ₹{amount}Cr"),
+                    evidence={"director": d, "supplier": supplier, "amount_crore": amount},
+                    source="Entity Graph — NetworkX traversal",
+                )
 
-    return FraudFlag(
-        flag_type="RELATED_PARTY_DIRECTOR_OVERLAP",
-        severity="CRITICAL",
-        score_penalty=-25,
-        description=(
-            f"{director} is director of both {borrower_name} and its "
-            f"supplier {supplier}. Payment: ₹{amount}Cr"
-        ),
-        evidence={
-            "director": director,
-            "supplier": supplier,
-            "amount_crore": amount,
-        },
-        source="Entity Graph — Neo4j Cypher traversal",
-    )
+    return None
 
 
 def detect_historical_rejection(
-    driver, job_id: str, borrower_name: str
+    G: nx.MultiDiGraph, job_id: str, borrower_name: str
 ) -> Optional[FraudFlag]:
     """
     Detect: The same company or a company sharing a director has been
     rejected in a previous Intelli-Credit application.
     """
-    # Direct rejection
-    direct_query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}})"
-        f"-[:{APPLIED_FOR}]->(prev_app:{APPLICATION}) "
-        f"WHERE prev_app.job_id <> $job_id AND prev_app.decision = 'REJECT' "
-        f"RETURN prev_app.job_id AS prev_job, "
-        f"       prev_app.borrower_name AS prev_company"
-    )
+    if not G.has_node(borrower_name):
+        return None
 
-    with driver.session() as session:
-        result = session.run(
-            direct_query, borrower_name=borrower_name, job_id=job_id
-        )
-        direct_record = result.single()
+    def _is_rejected_app(app_id):
+        return G.has_node(app_id) and G.nodes[app_id].get("decision") == "REJECT"
 
-    if direct_record is not None:
-        prev_job = direct_record["prev_job"]
-        logger.warning(
-            f"[{job_id}] FRAUD: Direct historical rejection — "
-            f"{borrower_name} was rejected in {prev_job}"
-        )
-        return FraudFlag(
-            flag_type="HISTORICAL_REJECTION_MATCH",
-            severity="HIGH",
-            score_penalty=-15,
-            description=(
-                f"{borrower_name} was previously rejected in "
-                f"application {prev_job}"
-            ),
-            evidence={
-                "previous_job_id": prev_job,
-                "previous_company": direct_record["prev_company"],
-                "match_type": "direct",
-            },
-            source="Entity Graph — cross-application historical query",
-        )
+    # 1. Direct rejection
+    for app in G.successors(borrower_name):
+        if _get_edges_by_type(G, borrower_name, app, APPLIED_FOR):
+            if app != job_id and _is_rejected_app(app):
+                prev_comp = G.nodes[app].get("borrower_name", borrower_name)
+                logger.warning(f"[{job_id}] FRAUD: Direct historical rejection — {borrower_name} was rejected in {app}")
+                return FraudFlag(
+                    flag_type="HISTORICAL_REJECTION_MATCH",
+                    severity="HIGH",
+                    score_penalty=-15,
+                    description=f"{borrower_name} was previously rejected in application {app}",
+                    evidence={"previous_job_id": app, "previous_company": prev_comp, "match_type": "direct"},
+                    source="Entity Graph — NetworkX cross-app query",
+                )
 
-    # Director-linked rejection
-    linked_query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}})"
-        f"<-[:{DIRECTOR_OF}]-(d:{PERSON}) "
-        f"MATCH (d)-[:{DIRECTOR_OF}]->(other:{COMPANY})"
-        f"-[:{APPLIED_FOR}]->(prev:{APPLICATION}) "
-        f"WHERE prev.decision = 'REJECT' "
-        f"RETURN d.name AS shared_director, "
-        f"       other.name AS rejected_company, "
-        f"       prev.job_id AS prev_job"
-    )
-
-    with driver.session() as session:
-        result = session.run(
-            linked_query, borrower_name=borrower_name
-        )
-        linked_record = result.single()
-
-    if linked_record is not None:
-        director = linked_record["shared_director"]
-        rejected = linked_record["rejected_company"]
-        prev_job = linked_record["prev_job"]
-
-        logger.warning(
-            f"[{job_id}] FRAUD: Director-linked rejection — "
-            f"{director} linked to rejected {rejected} ({prev_job})"
-        )
-        return FraudFlag(
-            flag_type="HISTORICAL_REJECTION_MATCH",
-            severity="HIGH",
-            score_penalty=-15,
-            description=(
-                f"Director {director} linked to previously rejected "
-                f"application {prev_job} ({rejected})"
-            ),
-            evidence={
-                "shared_director": director,
-                "rejected_company": rejected,
-                "previous_job_id": prev_job,
-                "match_type": "director_linked",
-            },
-            source="Entity Graph — cross-application historical query",
-        )
-
+    # 2. Director-linked rejection
+    for d in G.predecessors(borrower_name):
+        if _get_edges_by_type(G, d, borrower_name, DIRECTOR_OF):
+            for other_comp in G.successors(d):
+                if other_comp != borrower_name and _get_edges_by_type(G, d, other_comp, DIRECTOR_OF):
+                    for app in G.successors(other_comp):
+                        if _get_edges_by_type(G, other_comp, app, APPLIED_FOR):
+                            if app != job_id and _is_rejected_app(app):
+                                logger.warning(f"[{job_id}] FRAUD: Director-linked rejection — {d} linked to rejected {other_comp} ({app})")
+                                return FraudFlag(
+                                    flag_type="HISTORICAL_REJECTION_MATCH",
+                                    severity="HIGH",
+                                    score_penalty=-15,
+                                    description=f"Director {d} linked to previously rejected application {app} ({other_comp})",
+                                    evidence={"shared_director": d, "rejected_company": other_comp, "previous_job_id": app, "match_type": "director_linked"},
+                                    source="Entity Graph — NetworkX cross-app query",
+                                )
     return None
 
 
 def detect_shell_supplier_network(
-    driver, job_id: str, borrower_name: str
+    G: nx.MultiDiGraph, job_id: str, borrower_name: str
 ) -> Optional[FraudFlag]:
     """
-    Detect: Multiple suppliers of the borrower share the same director —
-    suggesting a shell company network controlled by the promoter.
+    Detect: Multiple suppliers of the borrower share the same director.
     """
-    query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}})"
-        f"-[:{PAID_TO}]->(supplier:{COMPANY}) "
-        f"MATCH (supplier)<-[:{DIRECTOR_OF}]-(d:{PERSON}) "
-        f"WITH d, COLLECT(supplier.name) AS controlled_suppliers "
-        f"WHERE SIZE(controlled_suppliers) >= 2 "
-        f"RETURN d.name AS controller, controlled_suppliers"
-    )
-
-    with driver.session() as session:
-        result = session.run(query, borrower_name=borrower_name)
-        record = result.single()
-
-    if record is None:
+    if not G.has_node(borrower_name):
         return None
-
-    controller = record["controller"]
-    suppliers = record["controlled_suppliers"]
-
-    logger.warning(
-        f"[{job_id}] FRAUD: Shell network — {controller} controls "
-        f"{len(suppliers)} suppliers: {suppliers}"
-    )
-
-    return FraudFlag(
-        flag_type="SHELL_SUPPLIER_NETWORK",
-        severity="HIGH",
-        score_penalty=-20,
-        description=(
-            f"{controller} controls {len(suppliers)} suppliers of "
-            f"the borrower: {', '.join(suppliers)}"
-        ),
-        evidence={
-            "controller": controller,
-            "suppliers": suppliers,
-        },
-        source="Entity Graph — shell network Cypher",
-    )
+        
+    # Find all suppliers
+    suppliers = []
+    for s in G.successors(borrower_name):
+        if _get_edges_by_type(G, borrower_name, s, PAID_TO):
+            suppliers.append(s)
+            
+    # Group suppliers by director
+    director_suppliers = {}
+    for supplier in suppliers:
+        for d in G.predecessors(supplier):
+            if _get_edges_by_type(G, d, supplier, DIRECTOR_OF):
+                if d not in director_suppliers:
+                    director_suppliers[d] = []
+                director_suppliers[d].append(supplier)
+                
+    # Check for >= 2
+    for d, controlled in director_suppliers.items():
+        if len(controlled) >= 2:
+            logger.warning(f"[{job_id}] FRAUD: Shell network — {d} controls {len(controlled)} suppliers: {controlled}")
+            return FraudFlag(
+                flag_type="SHELL_SUPPLIER_NETWORK",
+                severity="HIGH",
+                score_penalty=-20,
+                description=f"{d} controls {len(controlled)} suppliers of the borrower: {', '.join(controlled)}",
+                evidence={"controller": d, "suppliers": controlled},
+                source="Entity Graph — shell network NetworkX",
+            )
+            
+    return None
 
 
 def detect_circular_ownership(
-    driver, job_id: str, borrower_name: str
+    G: nx.MultiDiGraph, job_id: str, borrower_name: str
 ) -> Optional[FraudFlag]:
     """
-    Detect: A subsidiary of the borrower is also a supplier to the borrower —
-    money flowing in a circle within the group.
+    Detect: A subsidiary of the borrower is also a supplier to the borrower
     """
-    query = (
-        f"MATCH (borrower:{COMPANY} {{name: $borrower_name}})"
-        f"<-[:{SUBSIDIARY_OF}]-(sub:{COMPANY}) "
-        f"MATCH (borrower)-[:{PAID_TO}]->(sub) "
-        f"RETURN sub.name AS circular_entity"
-    )
-
-    with driver.session() as session:
-        result = session.run(query, borrower_name=borrower_name)
-        record = result.single()
-
-    if record is None:
+    if not G.has_node(borrower_name):
         return None
-
-    entity = record["circular_entity"]
-
-    logger.warning(
-        f"[{job_id}] FRAUD: Circular ownership — {entity} is both "
-        f"subsidiary and supplier of {borrower_name}"
-    )
-
-    return FraudFlag(
-        flag_type="CIRCULAR_OWNERSHIP_PAYMENT",
-        severity="HIGH",
-        score_penalty=-20,
-        description=(
-            f"{entity} is both a subsidiary of and a paid supplier "
-            f"to the borrower"
-        ),
-        evidence={
-            "circular_entity": entity,
-            "borrower": borrower_name,
-        },
-        source="Entity Graph — circular ownership Cypher",
-    )
+        
+    for sub in G.predecessors(borrower_name):
+        if _get_edges_by_type(G, sub, borrower_name, SUBSIDIARY_OF):
+            if _get_edges_by_type(G, borrower_name, sub, PAID_TO):
+                logger.warning(f"[{job_id}] FRAUD: Circular ownership — {sub} is both subsidiary and supplier of {borrower_name}")
+                return FraudFlag(
+                    flag_type="CIRCULAR_OWNERSHIP_PAYMENT",
+                    severity="HIGH",
+                    score_penalty=-20,
+                    description=f"{sub} is both a subsidiary of and a paid supplier to the borrower",
+                    evidence={"circular_entity": sub, "borrower": borrower_name},
+                    source="Entity Graph — circular ownership NetworkX",
+                )
+    return None
 
 
 # =============================================================================
@@ -300,21 +220,28 @@ async def run_all_fraud_checks(
     driver, job_id: str, borrower_name: str
 ) -> FraudDetectionResult:
     """
-    Run all 4 fraud detection checks and write results to disk.
-
-    Executes each check independently — one failure does not block others.
-    Writes FraudDetectionResult to:
-      /tmp/intelli-credit/{job_id}/entity_fraud_flags.json
-
-    Args:
-        driver:        Neo4j driver instance.
-        job_id:        Current loan application job ID.
-        borrower_name: Primary borrower company name.
-
-    Returns:
-        FraudDetectionResult with all flags and aggregate scores.
+    Run all 4 fraud detection checks over NetworkX and write results to disk.
+    NOTE: driver is ignored, kept in signature for compat or typing limits.
     """
     import asyncio
+    
+    G = get_graph()
+    
+    # Resolve borrower name just like exporter did
+    resolved_name = borrower_name
+    if not G.has_node(borrower_name):
+        for node in G.nodes():
+            if isinstance(node, str):
+                if node.startswith("Unknown-") and node.endswith(job_id):
+                    resolved_name = node
+                    break
+                if borrower_name.lower() in node.lower() and not node.startswith("Unknown-"):
+                    if COMPANY in G.nodes[node].get("labels", []):
+                        resolved_name = node
+                        break
+                        
+    if resolved_name != borrower_name:
+        borrower_name = resolved_name
 
     checks = [
         ("related_party_director_overlap", detect_related_party_director_overlap),
@@ -328,13 +255,11 @@ async def run_all_fraud_checks(
     def _run_checks():
         for check_name, check_fn in checks:
             try:
-                flag = check_fn(driver, job_id, borrower_name)
+                flag = check_fn(G, job_id, borrower_name)
                 if flag is not None:
                     flags.append(flag)
             except Exception as e:
-                logger.error(
-                    f"[{job_id}] Fraud check '{check_name}' failed: {e}"
-                )
+                logger.error(f"[{job_id}] Fraud check '{check_name}' failed: {e}")
 
     await asyncio.to_thread(_run_checks)
 
@@ -349,7 +274,6 @@ async def run_all_fraud_checks(
         checked_at=now,
     )
 
-    # Write to disk (V11 filesystem handoff)
     output_dir = _BASE_PATH / job_id
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / "entity_fraud_flags.json"

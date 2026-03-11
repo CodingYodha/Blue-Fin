@@ -198,7 +198,7 @@ async def run_cro_persona(
     compliance_output: dict
 ) -> Dict[str, Any]:
     llm = ChatAnthropic(
-        model_name="claude-3-5-sonnet-20240620",
+        model_name="claude-sonnet-4-20250514",
         temperature=0.0,
         max_tokens=3000
     )

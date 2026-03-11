@@ -347,7 +347,7 @@ class FinancialExtraction(BaseModel):
 class PromoterEntity(BaseModel):
     """A promoter or director entity extracted from the document."""
 
-    model_config = {"json_schema_extra": {"title": "PromoterEntity"}}
+    model_config = {"json_schema_extra": {"title": "PromoterEntity"}, "coerce_numbers_to_str": True}
 
     name: str = Field(..., description="Full name with initials as written in the document")
     designation: Optional[str] = Field(

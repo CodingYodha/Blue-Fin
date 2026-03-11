@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
+import logging
 import pandas as pd
 
 from .layer1_scorer import Layer1Result
 from .layer2_scorer import Layer2Result
 from .model_loader import MLArtifacts
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CombinedScore:
@@ -12,12 +15,17 @@ class CombinedScore:
     layer2_score: float
     final_score: float
     deviation: float
+    capped_deviation: float
     distribution_anomaly: bool
     anomaly_note: Optional[str]
     score_m1: float
     score_m2: float
     score_m3: float
     score_m4: float
+    weighted_m1: float
+    weighted_m2: float
+    weighted_m3: float
+    weighted_m4: float
     final_pd: float
 
 @dataclass
@@ -56,23 +64,39 @@ def combine_scores(
         )
     else:
         # L1 and L2 agree — use L2 (more nuanced) as final
+        capped_deviation = deviation
         final_score = l2_score
         distribution_anomaly = False
         anomaly_note = None
 
     final_score = round(max(0.0, min(100.0, final_score)), 2)
 
+    logger.info("[score-combiner] L1=%.1f L2=%.1f deviation=%.1f final=%.1f",
+                l1_score, l2_score, deviation, final_score)
+
+    # Compute weighted model contributions that sum to final_score
+    scale = final_score / l2_score if l2_score > 0 else 0.0
+    weighted_m1 = round(l2.score_m1 * scale, 2)
+    weighted_m2 = round(l2.score_m2 * scale, 2)
+    weighted_m3 = round(l2.score_m3 * scale, 2)
+    weighted_m4 = round(l2.score_m4 * scale, 2)
+
     return CombinedScore(
         layer1_score=l1_score,
         layer2_score=l2_score,
         final_score=final_score,
         deviation=round(deviation, 2),
+        capped_deviation=round(capped_deviation, 2),
         distribution_anomaly=distribution_anomaly,
         anomaly_note=anomaly_note,
         score_m1=l2.score_m1, 
         score_m2=l2.score_m2,
         score_m3=l2.score_m3, 
         score_m4=l2.score_m4,
+        weighted_m1=weighted_m1,
+        weighted_m2=weighted_m2,
+        weighted_m3=weighted_m3,
+        weighted_m4=weighted_m4,
         final_pd=l2.final_pd
     )
 
@@ -121,17 +145,19 @@ def run_stress_tests(
 ) -> StressTestResult:
 
     results = {}
+    base_l2_composite = l2_score_m1 + l2_score_m2 + l2_score_m3 + l2_score_m4
 
     # Scenario 1: Revenue Shock — Revenue growth -20%
     X1_s1 = X1.copy()
     X1_s1["Revenue_Growth_YoY"] = X1_s1["Revenue_Growth_YoY"] - 0.20
     pd_s1 = artifacts.model_1.predict_proba(X1_s1)[:, 1][0]
     score_s1_m1 = (1 - pd_s1) * 40
-    score_s1 = score_s1_m1 + l2_score_m2 + l2_score_m3 + l2_score_m4
+    stressed_l2_s1 = score_s1_m1 + l2_score_m2 + l2_score_m3 + l2_score_m4
+    score_s1 = round(max(0.0, min(100.0, base_score + (stressed_l2_s1 - base_l2_composite))), 2)
     dec_s1 = make_decision(score_s1, raw_features.get("net_worth_crore", 0))
     results["Revenue_Shock"] = {
         "scenario": "Revenue growth -20% (recession / demand destruction)",
-        "stressed_score": round(score_s1, 2),
+        "stressed_score": score_s1,
         "decision": dec_s1.decision,
         "flipped": dec_s1.decision != base_decision,
         "action": "Recommend escrow account + quarterly revenue monitoring"
@@ -145,11 +171,12 @@ def run_stress_tests(
     X1_s2["DSCR_vs_Sector_Threshold"] = dscr_val - sector_config.get("dscr_ok", 0.0)
     pd_s2 = artifacts.model_1.predict_proba(X1_s2)[:, 1][0]
     score_s2_m1 = (1 - pd_s2) * 40
-    score_s2 = score_s2_m1 + l2_score_m2 + l2_score_m3 + l2_score_m4
+    stressed_l2_s2 = score_s2_m1 + l2_score_m2 + l2_score_m3 + l2_score_m4
+    score_s2 = round(max(0.0, min(100.0, base_score + (stressed_l2_s2 - base_l2_composite))), 2)
     dec_s2 = make_decision(score_s2, raw_features.get("net_worth_crore", 0))
     results["Rate_Hike_200bps"] = {
         "scenario": "Interest rate +200bps (RBI tightening cycle)",
-        "stressed_score": round(score_s2, 2),
+        "stressed_score": score_s2,
         "decision": dec_s2.decision,
         "flipped": dec_s2.decision != base_decision,
         "action": "Recommend fixed rate covenant or hedging requirement"
@@ -164,11 +191,12 @@ def run_stress_tests(
     X2_s3["GST_Variance_Severe"] = int(var_val > 0.40)
     pd_s3 = artifacts.model_2.predict_proba(X2_s3)[:, 1][0]
     score_s3_m2 = (1 - pd_s3) * 30
-    score_s3 = l2_score_m1 + score_s3_m2 + l2_score_m3 + l2_score_m4
+    stressed_l2_s3 = l2_score_m1 + score_s3_m2 + l2_score_m3 + l2_score_m4
+    score_s3 = round(max(0.0, min(100.0, base_score + (stressed_l2_s3 - base_l2_composite))), 2)
     dec_s3 = make_decision(score_s3, raw_features.get("net_worth_crore", 0))
     results["GST_Scrutiny"] = {
         "scenario": "GST scrutiny (variance ×1.5 + notice issued)",
-        "stressed_score": round(score_s3, 2),
+        "stressed_score": score_s3,
         "decision": dec_s3.decision,
         "flipped": dec_s3.decision != base_decision,
         "action": "Recommend independent auditor certificate as condition precedent"

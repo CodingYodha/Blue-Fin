@@ -95,7 +95,7 @@ async def assemble_features(job_id: str, artifacts: MLArtifacts) -> FeatureAssem
     Credit_Rating = safe_float(rag, "rating_intelligence", "current_rating", default="NR")
     if not isinstance(Credit_Rating, str): Credit_Rating = str(Credit_Rating)
     
-    Sector = ocr.get("entity_extraction", {}).get("industry", "DEFAULT")
+    Sector = (ocr.get("entity_extraction") or {}).get("industry", "DEFAULT")
 
     # M1 Derived Base
     Revenue_Growth_YoY = (Revenue_Crore - rev_previous) / max(abs(rev_previous), 0.001)
@@ -127,6 +127,12 @@ async def assemble_features(job_id: str, artifacts: MLArtifacts) -> FeatureAssem
     Round_Trip_Transaction_Count = float(go.get("round_trip_transaction_count", 0))
     Cash_Deposit_Ratio = float(go.get("cash_deposit_ratio", 0.0))
     GST_Scrutiny_Notice_Flag = int(go.get("gst_scrutiny_notice_flag", 0))
+
+    logger.info("[fraud-wiring] Go→Python values: gst_var=%.4f itc_mismatch=%.4f "
+                "round_trips=%.0f cash_ratio=%.1f",
+                GST_vs_Bank_Variance_Pct, GSTR_2A_3B_ITC_Mismatch_Pct,
+                Round_Trip_Transaction_Count, Cash_Deposit_Ratio)
+
     GST_Variance_vs_Sector = GST_vs_Bank_Variance_Pct - sector_config.get("gst_var_normal", 0.0)
 
     # M3 Industry Base
@@ -146,18 +152,18 @@ async def assemble_features(job_id: str, artifacts: MLArtifacts) -> FeatureAssem
     Governance_Issues_Flag = int(ent.get("governance_issues_flag", 0))
     SARFAESI_Action_Flag = int(ent.get("sarfaesi_action_flag", 0))
     
-    qual = rag.get("qualitative_signals", {})
-    Auditor_Qualified_Opinion_Flag = int(qual.get("auditor_qualification", {}).get("has_qualification", 0))
-    Litigation_Count = len(qual.get("litigation_disclosures", []))
+    qual = rag.get("qualitative_signals") or {}
+    Auditor_Qualified_Opinion_Flag = int((qual.get("auditor_qualification") or {}).get("has_qualification", 0))
+    Litigation_Count = len(qual.get("litigation_disclosures") or [])
     NCLT_Active_Flag = int(res.get("litigation_risk") == "ACTIVE")
     Promoter_Disputes_Flag = int(res.get("promoter_risk") == "HIGH")
     Negative_News_Sentiment = float(res.get("sector_sentiment_score", 0.0))
     
-    key_findings = res.get("key_findings", [])
+    key_findings = res.get("key_findings") or []
     fraud_keywords = ["ED", "CBI", "SFIO", "FRAUD", "ENFORCEMENT", "LAUNDERING"]
     Fraud_Keywords_Count = len([
-        f for f in key_findings
-        if any(kw in f.get("finding", "").upper() for kw in fraud_keywords)
+        f for f in key_findings if isinstance(f, dict)
+        and any(kw in f.get("finding", "").upper() for kw in fraud_keywords)
     ])
 
     # === CATEGORY A: Hardcoded threshold flags ===
