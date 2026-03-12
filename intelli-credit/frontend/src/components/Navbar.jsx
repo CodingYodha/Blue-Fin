@@ -5,7 +5,7 @@ import { useTheme } from "../context/ThemeContext.jsx";
 
 const NAV_LINKS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/upload", label: "Upload", icon: Upload },
+  { to: "/onboard", label: "New Analysis", icon: Upload },
   { to: "/history", label: "History", icon: History },
 ];
 
@@ -17,8 +17,11 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       {/* Brand */}
-      <Link to="/" className="navbar-brand" style={{ textDecoration: 'none' }}>
-        <span style={{ fontStyle: 'italic', color: 'var(--accent)' }}>Intelli</span>Credit
+      <Link to="/" className="navbar-brand" style={{ textDecoration: "none" }}>
+        <span style={{ fontStyle: "italic", color: "var(--accent)" }}>
+          Blue
+        </span>
+        -Fin
       </Link>
 
       {/* Center links */}
@@ -41,15 +44,31 @@ export default function Navbar() {
       <div className="flex items-center gap-sm">
         {user ? (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-full)', border: '1px solid var(--border)' }}>
-              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "6px 14px",
+                background: "var(--bg-elevated)",
+                borderRadius: "var(--radius-full)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  color: "var(--text-secondary)",
+                }}
+              >
                 {user.email}
               </span>
             </div>
             <button
               onClick={logout}
               className="btn btn-secondary btn-sm"
-              style={{ borderRadius: 'var(--radius-full)' }}
+              style={{ borderRadius: "var(--radius-full)" }}
             >
               Sign Out
             </button>
@@ -58,7 +77,7 @@ export default function Navbar() {
           <Link
             to="/auth"
             className="btn btn-primary btn-sm"
-            style={{ borderRadius: 'var(--radius-full)' }}
+            style={{ borderRadius: "var(--radius-full)" }}
           >
             Sign In
           </Link>
@@ -66,12 +85,12 @@ export default function Navbar() {
         <button
           onClick={toggleTheme}
           className="btn-icon btn-ghost"
-          style={{ borderRadius: 'var(--radius-sm)' }}
+          style={{ borderRadius: "var(--radius-sm)" }}
           title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
         >
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
       </div>
-      </nav>
+    </nav>
   );
 }

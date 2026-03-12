@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Shield, Brain, Network, Search, FileText } from "lucide-react";
+import {
+  ArrowRight,
+  Shield,
+  Brain,
+  Network,
+  Search,
+  FileText,
+} from "lucide-react";
 
 /* ─── Animated counter on scroll ─── */
 function Counter({ target, suffix = "" }) {
@@ -203,10 +210,7 @@ export default function LandingPage() {
           }}
         >
           Credit decisions,{" "}
-          <em
-            className="serif-italic"
-            style={{ color: "var(--accent)" }}
-          >
+          <em className="serif-italic" style={{ color: "var(--accent)" }}>
             reimagined
           </em>
         </h1>
@@ -222,15 +226,15 @@ export default function LandingPage() {
           }}
         >
           End-to-end AI credit appraisal for Indian banks. Forensic PDF
-          analysis, LightGBM scoring, autonomous research, and
-          officer-grade memos in one pipeline.
+          analysis, LightGBM scoring, autonomous research, and officer-grade
+          memos in one pipeline.
         </p>
 
         {/* CTAs */}
         <div className="flex gap-md" style={{ marginBottom: "48px" }}>
           <button
             className="btn btn-primary btn-lg"
-            onClick={() => navigate("/upload")}
+            onClick={() => navigate("/onboard")}
           >
             Get Started <ArrowRight size={18} />
           </button>
@@ -385,7 +389,12 @@ export default function LandingPage() {
               key={step.n}
               className="card"
               style={{
-                borderRadius: i === 0 ? "var(--radius-lg) 0 0 var(--radius-lg)" : i === 2 ? "0 var(--radius-lg) var(--radius-lg) 0" : "0",
+                borderRadius:
+                  i === 0
+                    ? "var(--radius-lg) 0 0 var(--radius-lg)"
+                    : i === 2
+                      ? "0 var(--radius-lg) var(--radius-lg) 0"
+                      : "0",
                 borderLeft: i > 0 ? "none" : undefined,
               }}
             >
@@ -412,7 +421,13 @@ export default function LandingPage() {
               >
                 {step.title}
               </h3>
-              <p style={{ color: "var(--text-muted)", fontSize: "13px", lineHeight: 1.6 }}>
+              <p
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: "13px",
+                  lineHeight: 1.6,
+                }}
+              >
                 {step.body}
               </p>
             </div>
@@ -459,10 +474,7 @@ export default function LandingPage() {
                 {slide.tag}
               </span>
             </div>
-            <h3
-              className="serif"
-              style={{ fontSize: "20px", lineHeight: 1.3 }}
-            >
+            <h3 className="serif" style={{ fontSize: "20px", lineHeight: 1.3 }}>
               {slide.title}
             </h3>
             <p
@@ -486,7 +498,8 @@ export default function LandingPage() {
                     width: i === activeSlide ? "28px" : "8px",
                     height: "8px",
                     borderRadius: "var(--radius-full)",
-                    background: i === activeSlide ? slide.accent : "var(--bg-elevated)",
+                    background:
+                      i === activeSlide ? slide.accent : "var(--bg-elevated)",
                     border: "none",
                     cursor: "pointer",
                     transition: "all 0.3s ease",
@@ -509,14 +522,21 @@ export default function LandingPage() {
                     padding: "16px 20px",
                     borderRadius: "var(--radius-md)",
                     border: `1px solid ${i === activeSlide ? "var(--border-hover)" : "transparent"}`,
-                    background: i === activeSlide ? "var(--bg-surface)" : "transparent",
+                    background:
+                      i === activeSlide ? "var(--bg-surface)" : "transparent",
                     cursor: "pointer",
                     transition: "all 0.2s ease",
                   }}
                 >
-                  <div className="flex items-center gap-sm" style={{ marginBottom: "4px" }}>
+                  <div
+                    className="flex items-center gap-sm"
+                    style={{ marginBottom: "4px" }}
+                  >
                     <Icon size={14} style={{ color: s.accent, opacity: 0.7 }} />
-                    <span className="label" style={{ color: "var(--text-muted)" }}>
+                    <span
+                      className="label"
+                      style={{ color: "var(--text-muted)" }}
+                    >
                       {s.tag.split("—")[0].trim()}
                     </span>
                   </div>
@@ -524,7 +544,10 @@ export default function LandingPage() {
                     style={{
                       fontSize: "14px",
                       fontWeight: 500,
-                      color: i === activeSlide ? "var(--text-primary)" : "var(--text-muted)",
+                      color:
+                        i === activeSlide
+                          ? "var(--text-primary)"
+                          : "var(--text-muted)",
                       transition: "color 0.2s",
                     }}
                   >
@@ -608,7 +631,13 @@ export default function LandingPage() {
                 >
                   {f.title}
                 </h3>
-                <p style={{ color: "var(--text-muted)", fontSize: "13px", lineHeight: 1.6 }}>
+                <p
+                  style={{
+                    color: "var(--text-muted)",
+                    fontSize: "13px",
+                    lineHeight: 1.6,
+                  }}
+                >
                   {f.body}
                 </p>
               </div>
@@ -631,7 +660,10 @@ export default function LandingPage() {
             overflow: "hidden",
           }}
         >
-          <div className="eyebrow" style={{ marginBottom: "20px", justifyContent: "center" }}>
+          <div
+            className="eyebrow"
+            style={{ marginBottom: "20px", justifyContent: "center" }}
+          >
             Get started today
           </div>
           <h2
@@ -656,7 +688,7 @@ export default function LandingPage() {
           </p>
           <button
             className="btn btn-primary btn-lg"
-            onClick={() => navigate("/upload")}
+            onClick={() => navigate("/onboard")}
           >
             Upload Documents <ArrowRight size={18} />
           </button>

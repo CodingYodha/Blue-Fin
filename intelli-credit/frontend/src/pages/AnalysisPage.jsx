@@ -17,7 +17,9 @@ export default function AnalysisPage() {
   const sourceRef = useRef(null);
 
   useEffect(() => {
-    function onResize() { setIsMobile(window.innerWidth < 768); }
+    function onResize() {
+      setIsMobile(window.innerWidth < 768);
+    }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -32,7 +34,10 @@ export default function AnalysisPage() {
       setResult(event.data);
       setIsComplete(true);
       setPercent(100);
-      if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; }
+      if (sourceRef.current) {
+        sourceRef.current.close();
+        sourceRef.current = null;
+      }
     } else if (event.type === "error") {
       setSseError(event.message);
       setEvents((prev) => [...prev, event]);
@@ -42,12 +47,20 @@ export default function AnalysisPage() {
   useEffect(() => {
     const source = createSSEConnection(jobId, handleEvent);
     sourceRef.current = source;
-    return () => { if (sourceRef.current) { sourceRef.current.close(); sourceRef.current = null; } };
+    return () => {
+      if (sourceRef.current) {
+        sourceRef.current.close();
+        sourceRef.current = null;
+      }
+    };
   }, []);
 
   if (sseError) {
     return (
-      <div className="page-enter flex items-center justify-center" style={{ minHeight: "100vh", padding: "24px" }}>
+      <div
+        className="page-enter flex items-center justify-center"
+        style={{ minHeight: "100vh", padding: "24px" }}
+      >
         <div
           className="card"
           style={{
@@ -59,11 +72,22 @@ export default function AnalysisPage() {
             textAlign: "center",
           }}
         >
-          <span className="label" style={{ color: "var(--danger)", marginBottom: "8px", display: "block" }}>
+          <span
+            className="label"
+            style={{
+              color: "var(--danger)",
+              marginBottom: "8px",
+              display: "block",
+            }}
+          >
             Pipeline Error
           </span>
           <p style={{ fontSize: "15px", marginBottom: "24px" }}>{sseError}</p>
-          <Link to="/" className="btn btn-primary btn-sm" style={{ textDecoration: "none" }}>
+          <Link
+            to="/"
+            className="btn btn-primary btn-sm"
+            style={{ textDecoration: "none" }}
+          >
             Try Again
           </Link>
         </div>
@@ -73,34 +97,59 @@ export default function AnalysisPage() {
 
   if (isMobile) {
     return (
-      <div className="page-enter flex flex-col items-center justify-center" style={{ minHeight: "100vh", padding: "32px", textAlign: "center", gap: "16px" }}>
-        <span className="serif" style={{ fontSize: "20px", fontWeight: 700, color: "var(--accent)" }}>
-          INTELLI-CREDIT
+      <div
+        className="page-enter flex flex-col items-center justify-center"
+        style={{
+          minHeight: "100vh",
+          padding: "32px",
+          textAlign: "center",
+          gap: "16px",
+        }}
+      >
+        <span
+          className="serif"
+          style={{ fontSize: "20px", fontWeight: 700, color: "var(--accent)" }}
+        >
+          BLUE-FIN
         </span>
-        <p style={{ fontWeight: 600 }}>Analysis dashboard is optimised for desktop.</p>
+        <p style={{ fontWeight: 600 }}>
+          Analysis dashboard is optimised for desktop.
+        </p>
         <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
           Please open this page on a larger screen.
         </p>
-        <Link to="/" style={{ fontSize: "13px" }}>← Back to Home</Link>
+        <Link to="/" style={{ fontSize: "13px" }}>
+          ← Back to Home
+        </Link>
       </div>
     );
   }
 
   if (!isComplete) {
-    return <PipelineProgress events={events} percent={percent} currentStage={currentStage} />;
+    return (
+      <PipelineProgress
+        events={events}
+        percent={percent}
+        currentStage={currentStage}
+      />
+    );
   }
 
   return (
     <div className="page-enter">
-      <ResultsDashboard 
-        result={result} 
-        activeTab={activeTab} 
-        onTabChange={setActiveTab} 
+      <ResultsDashboard
+        result={result}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
         jobId={jobId}
         onScoreUpdate={(newScore, newDecision, delta) => {
           setResult((prev) => ({
             ...prev,
-            score_breakdown: { ...prev.score_breakdown, final_score: newScore, decision: newDecision },
+            score_breakdown: {
+              ...prev.score_breakdown,
+              final_score: newScore,
+              decision: newDecision,
+            },
           }));
         }}
       />
