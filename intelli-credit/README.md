@@ -1,8 +1,19 @@
+---
+title: Intelli-Credit
+emoji: 💳
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+fullWidth: true
+---
+
 # Intelli-Credit
 
-This project has been updated to run locally without Docker or `docker-compose`. 
+This project has been updated to run locally without Docker or `docker-compose`.
 
 ## Prerequisites
+
 - Python 3.11+
 - Node.js (for frontend/backend)
 - Golang (for go-service)

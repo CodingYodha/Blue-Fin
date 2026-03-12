@@ -1,0 +1,36 @@
+# Ignore local dev files and caches
+**/__pycache__
+**/node_modules
+**/.git
+**/.env
+**/.env.*
+**/venv
+**/.venv
+**/dist
+**/.next
+**/*.pyc
+**/*.pyo
+
+# Go build cache
+go-service/go-service
+
+# Storage (Qdrant local data — not needed in cloud)
+storage/
+
+# Temp files
+tmp/
+**/tmp/
+
+# Unsloth compiled cache (not needed for deployment)
+ai-service/unsloth_compiled_cache/
+
+# Training data (not needed at runtime)
+ai-service/ml_core/training_data/
+
+# Large unnecessary files
+ai-service/=0.45.5
+ai-service/=3.4.1,
+
+# IDE
+**/.vscode
+**/.idea
