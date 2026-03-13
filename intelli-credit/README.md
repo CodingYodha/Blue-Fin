@@ -31,5 +31,5 @@ This project has been updated to run locally without Docker or `docker-compose`.
 5. Copy the example environment variables: `cp .env.example .env` and fill in your keys.
 6. Start the server:
    ```bash
-   uvicorn main:app --reload --port 8001
+   uvicorn main:app --reload  --port 8001
    ```
